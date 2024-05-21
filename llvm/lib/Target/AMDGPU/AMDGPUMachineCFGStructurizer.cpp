@@ -2832,6 +2832,3 @@ INITIALIZE_PASS_DEPENDENCY(MachineRegionInfoPass)
 INITIALIZE_PASS_END(AMDGPUMachineCFGStructurizer, "amdgpu-machine-cfg-structurizer",
                     "AMDGPU Machine CFG Structurizer", false, false)
 
-FunctionPass *llvm::createAMDGPUMachineCFGStructurizerPass() {
-  return new AMDGPUMachineCFGStructurizer();
-}
