@@ -904,6 +904,14 @@ void Verifier::visitGlobalVariable(const GlobalVariable &GV) {
   SmallVector<MDNode *, 1> MDs;
   GV.getMetadata(LLVMContext::MD_dbg, MDs);
   for (auto *MD : MDs) {
+    if (auto *GVE = dyn_cast<DIGlobalVariableExpression>(MD)) {
+      if (auto *E = dyn_cast_or_null<DIExpression>(GVE->getRawExpression())) {
+        SmallVector<const Value *> Arguments{&GV};
+        DIExpressionEnv Env{GVE->getVariable(), Arguments, DL};
+        CheckDI(E->isValid(Env, dbgs()),
+                "invalid DIExpression in DIGlobalVariableExpression", &GV);
+      }
+    }
     if (auto *GVE = dyn_cast<DIGlobalVariableExpression>(MD))
       visitDIGlobalVariableExpression(*GVE);
     else
@@ -6524,6 +6532,13 @@ void Verifier::visit(DbgVariableRecord &DVR) {
           "invalid #dbg record expression", &DVR, DVR.getRawExpression());
   visitMDNode(*DVR.getExpression(), AreDebugLocsAllowed::No);
 
+  // This is redundant with the visitMDNode check above, but here we can include
+  // arguments for DIOp-based expression checking.
+  SmallVector<const Value *> Arguments{DVR.location_ops()};
+  DIExpressionEnv ExprEnv{DVR.getVariable(), Arguments, DL};
+  CheckDI(DVR.getExpression()->isValid(ExprEnv, dbgs()),
+          "invalid #dbg record expression", &DVR, DVR.getRawExpression());
+
   if (DVR.isDbgAssign()) {
     CheckDI(isa_and_nonnull<DIAssignID>(DVR.getRawAssignID()),
             "invalid #dbg_assign DIAssignID", &DVR, DVR.getRawAssignID());
@@ -6826,6 +6841,14 @@ void Verifier::visitDbgIntrinsic(StringRef Kind, DbgVariableIntrinsic &DII) {
           DII.getRawVariable());
   CheckDI(isa<DIExpression>(DII.getRawExpression()),
           "invalid llvm.dbg." + Kind + " intrinsic expression", &DII,
+          DII.getRawExpression());
+
+  // This is redundant with the preprocessor-generated check, but here we
+  // can include arguments for DIOp-based expression checking.
+  SmallVector<const Value *> Arguments{DII.location_ops()};
+  DIExpressionEnv Env{DII.getVariable(), Arguments, DL};
+  CheckDI(DII.getExpression()->isValid(Env, dbgs()),
+          "invalid DIExpression in llvm.dbg." + Kind + " intrinsic", &DII,
           DII.getRawExpression());
 
   if (auto *DAI = dyn_cast<DbgAssignIntrinsic>(&DII)) {
