@@ -193,9 +193,9 @@ sections with improvements to Clang's support for those languages.
 
 C++ Language Changes
 --------------------
-- C++17 support is now completed, with the enablement of the
-  relaxed temlate template argument matching rules introduced in P0522,
-  which was retroactively applied as a defect report.
+- Allow single element access of GCC vector/ext_vector_type object to be 
+  constant expression. Supports the `V.xyzw` syntax and other tidbits 
+  as seen in OpenCL. Selecting multiple elements is left as a future work.
   While the implementation already existed since Clang 4, it was turned off by
   default, and was controlled with the `-frelaxed-template-template-args` flag.
   In this release, we implement provisional wording for a core defect on
