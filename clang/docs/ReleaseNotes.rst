@@ -327,6 +327,16 @@ Resolutions to C++ Defect Reports
 - Clang now considers ``noexcept(typeid(expr))`` more carefully, instead of always assuming that ``std::bad_typeid`` can be thrown.
   (`CWG2191: Incorrect result for noexcept(typeid(v)) <https://cplusplus.github.io/CWG/issues/2191.html>`_).
 
+- Allow calling initializer list constructors from initializer lists with
+  a single element of the same type instead of always copying.
+  (`CWG2137: List-initialization from object of same type <https://cplusplus.github.io/CWG/issues/2137.html>`)
+
+- Speculative resolution for CWG2311 implemented so that the implementation of CWG2137 doesn't remove
+  previous cases where guaranteed copy elision was done. Given a prvalue ``e`` of class type
+  ``T``, ``T{e}`` will try to resolve an initializer list constructor and will use it if successful.
+  Otherwise, if there is no initializer list constructor, the copy will be elided as if it was ``T(e)``.
+  (`CWG2311: Missed case for guaranteed copy elision <https://cplusplus.github.io/CWG/issues/2311.html>`)
+
 C Language Changes
 ------------------
 
