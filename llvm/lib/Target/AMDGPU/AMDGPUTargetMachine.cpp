@@ -340,6 +340,12 @@ static cl::opt<bool> EnableStructurizerWorkarounds(
     cl::desc("Enable workarounds for the StructurizeCFG pass"), cl::init(true),
     cl::Hidden);
 
+static cl::opt<bool>
+    EnableSwLowerLDS("amdgpu-enable-sw-lower-lds",
+                     cl::desc("Enable lowering of lds to global memory pass "
+                              "and asan instrument resulting IR."),
+                     cl::init(true), cl::Hidden);
+
 static cl::opt<bool, true> EnableLowerModuleLDS(
     "amdgpu-enable-lower-module-lds", cl::desc("Enable lower module lds pass"),
     cl::location(AMDGPUTargetMachine::EnableLowerModuleLDS), cl::init(true),
@@ -1073,6 +1079,10 @@ void AMDGPUPassConfig::addIRPasses() {
 
   // Replace OpenCL enqueued block function pointers with global variables.
   addPass(createAMDGPUOpenCLEnqueuedBlockLoweringPass());
+
+  // Lower LDS accesses to global memory if address sanitizer is enabled.
+  if (EnableSwLowerLDS)
+    addPass(createAMDGPUSwLowerLDSLegacyPass(&TM));
 
   // Runs before PromoteAlloca so the latter can account for function uses
   if (EnableLowerModuleLDS) {
