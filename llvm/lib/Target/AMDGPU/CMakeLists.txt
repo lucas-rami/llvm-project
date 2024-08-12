@@ -75,6 +75,7 @@ add_llvm_target(AMDGPUCodeGen
   AMDGPULowerKernelArguments.cpp
   AMDGPULowerKernelAttributes.cpp
   AMDGPULowerKernelCalls.cpp
+  AMDGPUSwLowerLDS.cpp
   AMDGPULowerModuleLDSPass.cpp
   AMDGPUMachineCFGStructurizer.cpp
   AMDGPUSwLowerLDS.cpp
@@ -190,6 +191,7 @@ add_llvm_target(AMDGPUCodeGen
   HipStdPar
   IPO
   IRPrinter
+  Instrumentation
   MC
   MIRParser
   Passes
