@@ -36,10 +36,9 @@
  *
  ******************************************************************************/
 
-
-#include "llvm/DebugInfo/Symbolize/SymbolizableObjectFile.h"
 #include "comgr-symbolizer.h"
 #include "llvm/BinaryFormat/Magic.h"
+#include "llvm/DebugInfo/Symbolize/SymbolizableObjectFile.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -47,7 +46,8 @@
 
 using namespace COMGR;
 
-static llvm::symbolize::PrinterConfig getDefaultPrinterConfig() {
+namespace {
+llvm::symbolize::PrinterConfig getDefaultPrinterConfig() {
   llvm::symbolize::PrinterConfig Config;
   Config.Pretty = true;
   Config.Verbose = false;
@@ -57,8 +57,8 @@ static llvm::symbolize::PrinterConfig getDefaultPrinterConfig() {
   return Config;
 }
 
-static llvm::symbolize::ErrorHandler symbolize_error_handler(
-    llvm::raw_string_ostream &OS) {
+llvm::symbolize::ErrorHandler
+symbolize_error_handler(llvm::raw_string_ostream &OS) {
   return
       [&](const llvm::ErrorInfoBase &ErrorInfo, llvm::StringRef ErrorBanner) {
         OS << ErrorBanner;
@@ -66,6 +66,7 @@ static llvm::symbolize::ErrorHandler symbolize_error_handler(
         OS << '\n';
       };
 }
+} // namespace
 
 Symbolizer::Symbolizer(std::unique_ptr<ObjectFile> &&CodeObject,
                        PrintSymbolCallback PrintSymbol)

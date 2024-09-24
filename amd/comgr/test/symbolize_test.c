@@ -40,49 +40,49 @@
 #include <string.h>
 
 typedef struct container {
-  char *data;
-  int sz;
+  char *Data;
+  int Sz;
 } container_t;
 
-void collect_symbolized_string(const char *input, void *data) {
-  int sz = strlen(input);
-  container_t *ptr = (container_t *)data;
-  ptr->data = (char *)malloc(sz + 1);
-  ptr->data[sz] = '\0';
-  ptr->sz = sz;
-  memcpy(ptr->data, input, sz);
+void collectSymbolizedString(const char *Input, void *Data) {
+  int Sz = strlen(Input);
+  container_t *Ptr = (container_t *)Data;
+  Ptr->Data = (char *)malloc(Sz + 1);
+  Ptr->Data[Sz] = '\0';
+  Ptr->Sz = Sz;
+  memcpy(Ptr->Data, Input, Sz);
 }
 
-void test_symbolized_string(container_t *symbol_container) {
+void testSymbolizedString(container_t *SymbolContainer) {
 
-  char *symbol_str = symbol_container->data;
-  char* space_pos = strchr(symbol_str, ' ');
-  if (space_pos == NULL) {
-    printf("Expected spaces in %s\n", symbol_str);
+  char *SymbolStr = SymbolContainer->Data;
+  char* SpacePos = strchr(SymbolStr, ' ');
+  if (SpacePos == NULL) {
+    printf("Expected spaces in %s\n", SymbolStr);
     exit(0);
   }
 
-  size_t func_name_size = space_pos - symbol_str;
-  char *func_name = (char*) malloc(sizeof(char) * (func_name_size + 1));
+  size_t FuncNameSize = SpacePos - SymbolStr;
+  char *FuncName = (char*) malloc(sizeof(char) * (FuncNameSize + 1));
 
-  if (!symbol_str) {
+  if (!SymbolStr) {
     printf("Failed, symbol_str NULL\n");
     exit(0);
   }
 
-  strncpy(func_name, symbol_str, func_name_size);
-  func_name[func_name_size] = '\0';
+  strncpy(FuncName, SymbolStr, FuncNameSize);
+  FuncName[FuncNameSize] = '\0';
 
-  if (strcmp(func_name, "bazzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")) {
+  if (strcmp(FuncName, "bazzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")) {
     printf("mismatch:\n");
     printf("expected symbolized function name: bazzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n");
-    printf("actual symbolized function name: %s\n", func_name);
+    printf("actual symbolized function name: %s\n", FuncName);
     exit(0);
   }
 
-  printf("symbolized string is %s", symbol_str);
-  free(func_name);
-  free(symbol_str);
+  printf("symbolized string is %s", SymbolStr);
+  free(FuncName);
+  free(SymbolStr);
 
   return;
 }
@@ -92,8 +92,8 @@ int main(int argc, char *argv[]) {
   char *Buf;
   amd_comgr_data_t DataIn;
   amd_comgr_status_t Status;
-  amd_comgr_symbolizer_info_t symbolizer;
-  container_t user_data;
+  amd_comgr_symbolizer_info_t Symbolizer;
+  container_t UserData;
 
   // Read input file
   Size = setBuf(TEST_OBJ_DIR "/shared-debug.so", &Buf);
@@ -112,23 +112,22 @@ int main(int argc, char *argv[]) {
   // Create symbolizer info and symbolize
   {
     printf("Test create symbolizer info\n");
-    Status = amd_comgr_create_symbolizer_info(DataIn,
-                                              &collect_symbolized_string,
-                                              &symbolizer);
+    Status = amd_comgr_create_symbolizer_info(DataIn, &collectSymbolizedString,
+                                              &Symbolizer);
     checkError(Status, "amd_comgr_create_symbolizer_info");
     // Use this command to get valid address
     // llvm-objdump --triple=amdgcn-amd-amdhsa -l --mcpu=gfx900 --disassemble --source shared.so
     int address = 5896;
-    Status = amd_comgr_symbolize(symbolizer, address, 1, (void *)&user_data);
+    Status = amd_comgr_symbolize(Symbolizer, address, 1, (void *)&UserData);
     checkError(Status, "amd_comgr_symbolize");
 
-    test_symbolized_string(&user_data);
+    testSymbolizedString(&UserData);
   }
 
   // Destroy symbolizer info
   {
     printf("Test destroy symbolizer info\n");
-    Status = amd_comgr_destroy_symbolizer_info(symbolizer);
+    Status = amd_comgr_destroy_symbolizer_info(Symbolizer);
     checkError(Status, "amd_comgr_destroy_symbolizer_info");
     Status = amd_comgr_release_data(DataIn);
     checkError(Status, "amd_comgr_release_data");
