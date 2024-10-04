@@ -173,10 +173,12 @@ multiclass VOP2Inst_e64<string opName,
 
 multiclass VOP2Inst_sdwa<string opName,
                          VOPProfile P,
+                         string revOp = opName,
                          bit GFX9Renamed = 0> {
   let renamedInGFX9 = GFX9Renamed in {
     if P.HasExtSDWA then
-      def _sdwa : VOP2_SDWA_Pseudo <opName, P>;
+      def _sdwa : VOP2_SDWA_Pseudo <opName, P>,
+                  Commutable_REV<revOp#"_sdwa", !eq(revOp, opName)>;
   } // End renamedInGFX9 = GFX9Renamed
 }
 
@@ -187,7 +189,7 @@ multiclass VOP2Inst<string opName,
                     bit GFX9Renamed = 0> :
     VOP2Inst_e32<opName, P, node, revOp, GFX9Renamed>,
     VOP2Inst_e64<opName, P, node, revOp, GFX9Renamed>,
-    VOP2Inst_sdwa<opName, P, GFX9Renamed> {
+    VOP2Inst_sdwa<opName, P, revOp, GFX9Renamed> {
   let renamedInGFX9 = GFX9Renamed in {
     if P.HasExtDPP then
       def _dpp  : VOP2_DPP_Pseudo <opName, P>;
@@ -236,7 +238,7 @@ multiclass VOP2Inst_VOPD<string opName,
                          bit GFX9Renamed = 0> :
     VOP2Inst_e32_VOPD<opName, P, VOPDOp, VOPDName, node, revOp, GFX9Renamed>,
     VOP2Inst_e64<opName, P, node, revOp, GFX9Renamed>,
-    VOP2Inst_sdwa<opName, P, GFX9Renamed> {
+    VOP2Inst_sdwa<opName, P, revOp, GFX9Renamed> {
   let renamedInGFX9 = GFX9Renamed in {
     if P.HasExtDPP then
       def _dpp  : VOP2_DPP_Pseudo <opName, P>;
@@ -258,7 +260,8 @@ multiclass VOP2bInst <string opName,
         }
 
         if P.HasExtSDWA then
-          def _sdwa  : VOP2_SDWA_Pseudo <opName, P> {
+          def _sdwa  : VOP2_SDWA_Pseudo <opName, P>,
+                       Commutable_REV<revOp#"_sdwa", !eq(revOp, opName)> {
             let AsmMatchConverter = "cvtSdwaVOP2b";
           }
         if P.HasExtDPP then
