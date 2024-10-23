@@ -1636,6 +1636,11 @@ def FeatureISAVersion11_5_2 : FeatureSet<
      FeatureDPPSrc1SGPR,
      FeatureVGPRSingleUseHintInsts])>;
 
+def FeatureISAVersion11_5_3 : FeatureSet<
+  !listconcat(FeatureISAVersion11_Common.Features,
+    [FeatureSALUFloatInsts,
+     FeatureDPPSrc1SGPR])>;
+
 def FeatureISAVersion12 : FeatureSet<
   [FeatureGFX12,
    FeatureLDSBankCount32,
