@@ -7,10 +7,10 @@ declare void @extern_func() #0
 define amdgpu_kernel void @stack_object_addrspacecast_in_kernel_no_calls() {
 ; FLAT_SCR_OPT-LABEL: stack_object_addrspacecast_in_kernel_no_calls:
 ; FLAT_SCR_OPT:       ; %bb.0:
-; FLAT_SCR_OPT-NEXT:    s_add_u32 s6, s6, s11
-; FLAT_SCR_OPT-NEXT:    s_addc_u32 s7, s7, 0
-; FLAT_SCR_OPT-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_LO), s6
-; FLAT_SCR_OPT-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_HI), s7
+; FLAT_SCR_OPT-NEXT:    s_add_u32 s0, s0, s3
+; FLAT_SCR_OPT-NEXT:    s_addc_u32 s1, s1, 0
+; FLAT_SCR_OPT-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_LO), s0
+; FLAT_SCR_OPT-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_HI), s1
 ; FLAT_SCR_OPT-NEXT:    s_mov_b64 s[0:1], src_private_base
 ; FLAT_SCR_OPT-NEXT:    v_mov_b32_e32 v0, 0
 ; FLAT_SCR_OPT-NEXT:    v_mov_b32_e32 v1, s1
@@ -37,10 +37,10 @@ define amdgpu_kernel void @stack_object_addrspacecast_in_kernel_no_calls() {
 define amdgpu_kernel void @stack_object_in_kernel_no_calls() {
 ; FLAT_SCR_OPT-LABEL: stack_object_in_kernel_no_calls:
 ; FLAT_SCR_OPT:       ; %bb.0:
-; FLAT_SCR_OPT-NEXT:    s_add_u32 s6, s6, s11
-; FLAT_SCR_OPT-NEXT:    s_addc_u32 s7, s7, 0
-; FLAT_SCR_OPT-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_LO), s6
-; FLAT_SCR_OPT-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_HI), s7
+; FLAT_SCR_OPT-NEXT:    s_add_u32 s0, s0, s3
+; FLAT_SCR_OPT-NEXT:    s_addc_u32 s1, s1, 0
+; FLAT_SCR_OPT-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_LO), s0
+; FLAT_SCR_OPT-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_HI), s1
 ; FLAT_SCR_OPT-NEXT:    v_mov_b32_e32 v0, 0
 ; FLAT_SCR_OPT-NEXT:    s_mov_b32 s0, 0
 ; FLAT_SCR_OPT-NEXT:    scratch_store_dword off, v0, s0
@@ -112,13 +112,13 @@ define amdgpu_kernel void @test(ptr addrspace(1) %out, i32 %in) {
 ; GCN-LABEL: test:
 ; GCN:       ; %bb.0:
 ; GCN-NEXT:    s_clause 0x1
-; GCN-NEXT:    s_load_dwordx2 s[0:1], s[2:3], 0x0
-; GCN-NEXT:    s_load_dword vcc_lo, s[2:3], 0x8
+; GCN-NEXT:    s_load_dwordx2 s[2:3], s[0:1], 0x0
+; GCN-NEXT:    s_load_dword vcc_lo, s[0:1], 0x8
 ; GCN-NEXT:    ; implicit-def: $vgpr0 : SGPR spill to VGPR lane
-; GCN-NEXT:    ; kill: killed $sgpr2_sgpr3
+; GCN-NEXT:    ; kill: killed $sgpr0_sgpr1
 ; GCN-NEXT:    s_waitcnt lgkmcnt(0)
-; GCN-NEXT:    v_writelane_b32 v0, s0, 0
-; GCN-NEXT:    v_writelane_b32 v0, s1, 1
+; GCN-NEXT:    v_writelane_b32 v0, s2, 0
+; GCN-NEXT:    v_writelane_b32 v0, s3, 1
 ; GCN-NEXT:    ;;#ASMSTART
 ; GCN-NEXT:    ;;#ASMEND
 ; GCN-NEXT:    ;;#ASMSTART
