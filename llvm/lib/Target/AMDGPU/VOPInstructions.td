@@ -615,7 +615,6 @@ class VOP_SDWA_Pseudo <string opName, VOPProfile P, list<dag> pattern=[]> :
   let Uses = !if(ReadsModeReg, [MODE, EXEC], [EXEC]);
 
   let SubtargetPredicate = HasSDWA;
-  let AssemblerPredicate = HasSDWA;
   let AsmVariantName = !if(P.HasExtSDWA, AMDGPUAsmVariants.SDWA,
                                          AMDGPUAsmVariants.Disable);
   let DecoderNamespace = "GFX8";
@@ -623,7 +622,7 @@ class VOP_SDWA_Pseudo <string opName, VOPProfile P, list<dag> pattern=[]> :
   VOPProfile Pfl = P;
 }
 
-class VOP_SDWA_Real <VOP_SDWA_Pseudo ps> :
+class VOP_SDWA8_Real <VOP_SDWA_Pseudo ps> :
   InstSI <ps.OutOperandList, ps.InOperandList, ps.Mnemonic # ps.AsmOperands, []>,
   SIMCInstr <ps.PseudoInstr, SIEncodingFamily.SDWA> {
 
@@ -641,7 +640,7 @@ class VOP_SDWA_Real <VOP_SDWA_Pseudo ps> :
 
   // Copy relevant pseudo op flags
   let SubtargetPredicate   = ps.SubtargetPredicate;
-  let AssemblerPredicate   = ps.AssemblerPredicate;
+  let AssemblerPredicate   = HasSDWA8;
   let AsmMatchConverter    = ps.AsmMatchConverter;
   let AsmVariantName       = ps.AsmVariantName;
   let UseNamedOperandTable = ps.UseNamedOperandTable;
@@ -672,7 +671,7 @@ class Base_VOP_SDWA9_Real <VOP_SDWA_Pseudo ps> :
   let Constraints     = ps.Constraints;
   let DisableEncoding = ps.DisableEncoding;
 
-  let SubtargetPredicate = HasSDWA9;
+  let SubtargetPredicate = ps.SubtargetPredicate;
   let AssemblerPredicate = HasSDWA9;
   let OtherPredicates    = ps.OtherPredicates;
   let AsmVariantName = !if(ps.Pfl.HasExtSDWA9, AMDGPUAsmVariants.SDWA9,
@@ -698,7 +697,7 @@ class VOP_SDWA9_Real <VOP_SDWA_Pseudo ps> :
   SIMCInstr <ps.PseudoInstr, SIEncodingFamily.SDWA9>;
 
 class Base_VOP_SDWA10_Real<VOP_SDWA_Pseudo ps> : Base_VOP_SDWA9_Real<ps> {
-  let SubtargetPredicate = HasSDWA10;
+  let SubtargetPredicate = ps.SubtargetPredicate;
   let AssemblerPredicate = HasSDWA10;
   let DecoderNamespace = "GFX10";
 }
