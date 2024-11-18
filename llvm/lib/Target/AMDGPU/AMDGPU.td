@@ -972,6 +972,24 @@ def FeatureHasRestrictedSOffset : SubtargetFeature<"restricted-soffset",
   "Has restricted SOffset (immediate not supported)."
 >;
 
+def FeatureRequiredExportPriority : SubtargetFeature<"required-export-priority",
+  "HasRequiredExportPriority",
+  "true",
+  "Export priority must be explicitly manipulated on GFX11.5"
+>;
+
+def FeatureVmemWriteVgprInOrder : SubtargetFeature<"vmem-write-vgpr-in-order",
+  "HasVmemWriteVgprInOrder",
+  "true",
+  "VMEM instructions of the same type write VGPR results in order"
+>;
+
+def FeaturePrngInst : SubtargetFeature<"prng-inst",
+  "HasPrngInst",
+  "true",
+  "Has v_prng_b32 instruction"
+>;
+
 //===------------------------------------------------------------===//
 // Subtarget Features (options and debugging)
 //===------------------------------------------------------------===//
@@ -1488,6 +1506,7 @@ def FeatureISAVersion9_5_Common : FeatureSet<
    FeatureFP8ConversionInsts,
    FeatureCvtFP8VOP1Bug,
    FeatureGFX950Insts,
+   FeaturePrngInst
    ])>;
 
 def FeatureISAVersion9_4_0 : FeatureSet<
@@ -2338,6 +2357,9 @@ def HasVGPRSingleUseHintInsts : Predicate<"Subtarget->hasVGPRSingleUseHintInsts(
 
 def HasPseudoScalarTrans : Predicate<"Subtarget->hasPseudoScalarTrans()">,
   AssemblerPredicate<(all_of FeaturePseudoScalarTrans)>;
+
+def HasPrngInst : Predicate<"Subtarget->hasPrngInst()">,
+  AssemblerPredicate<(all_of FeaturePrngInst)>;
 
 def HasGDS : Predicate<"Subtarget->hasGDS()">;
 
