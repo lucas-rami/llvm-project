@@ -1716,7 +1716,7 @@ class AMDGPURawBufferLoadLDS : Intrinsic <
   [],
   [llvm_v4i32_ty,             // rsrc(SGPR)
    LLVMQualPointerType<3>,    // LDS base offset
-   llvm_i32_ty,               // Data byte size: 1/2/4
+   llvm_i32_ty,               // Data byte size: 1/2/4 (/12/16 for gfx950)
    llvm_i32_ty,               // voffset(VGPR, included in bounds checking and swizzling)
    llvm_i32_ty,               // soffset(SGPR/imm, excluded from bounds checking and swizzling)
    llvm_i32_ty,               // imm offset(imm, included in bounds checking and swizzling)
@@ -1735,7 +1735,7 @@ class AMDGPURawPtrBufferLoadLDS : Intrinsic <
   [],
   [AMDGPUBufferRsrcTy,        // rsrc(SGPR)
    LLVMQualPointerType<3>,    // LDS base offset
-   llvm_i32_ty,               // Data byte size: 1/2/4
+   llvm_i32_ty,               // Data byte size: 1/2/4 (/12/16 for gfx950)
    llvm_i32_ty,               // voffset(VGPR, included in bounds checking and swizzling)
    llvm_i32_ty,               // soffset(SGPR/imm, excluded from bounds checking and swizzling)
    llvm_i32_ty,               // imm offset(imm, included in bounds checking and swizzling)
@@ -1757,7 +1757,7 @@ class AMDGPUStructBufferLoadLDS : Intrinsic <
   [],
   [llvm_v4i32_ty,             // rsrc(SGPR)
    LLVMQualPointerType<3>,    // LDS base offset
-   llvm_i32_ty,               // Data byte size: 1/2/4
+   llvm_i32_ty,               // Data byte size: 1/2/4 (/12/16 for gfx950)
    llvm_i32_ty,               // vindex(VGPR)
    llvm_i32_ty,               // voffset(VGPR, included in bounds checking and swizzling)
    llvm_i32_ty,               // soffset(SGPR/imm, excluded from bounds checking and swizzling)
@@ -1777,7 +1777,7 @@ class AMDGPUStructPtrBufferLoadLDS : Intrinsic <
   [],
   [AMDGPUBufferRsrcTy,        // rsrc(SGPR)
    LLVMQualPointerType<3>,    // LDS base offset
-   llvm_i32_ty,               // Data byte size: 1/2/4
+   llvm_i32_ty,               // Data byte size: 1/2/4 (/12/16 for gfx950)
    llvm_i32_ty,               // vindex(VGPR)
    llvm_i32_ty,               // voffset(VGPR, included in bounds checking and swizzling)
    llvm_i32_ty,               // soffset(SGPR/imm, excluded from bounds checking and swizzling)
