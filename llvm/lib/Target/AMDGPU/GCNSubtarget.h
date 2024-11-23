@@ -222,6 +222,8 @@ protected:
   bool HasPseudoScalarTrans = false;
   bool HasRestrictedSOffset = false;
   bool HasPrngInst = false;
+  bool HasPermlane16Swap = false;
+  bool HasPermlane32Swap = false;
   bool HasVcmpxPermlaneHazard = false;
   bool HasVMEMtoScalarWriteHazard = false;
   bool HasSMEMtoVectorWriteHazard = false;
@@ -1315,6 +1317,9 @@ public:
 
   /// \returns true if the target has instructions with xf32 format support.
   bool hasXF32Insts() const { return HasXF32Insts; }
+
+  bool hasPermlane16Swap() const { return HasPermlane16Swap; }
+  bool hasPermlane32Swap() const { return HasPermlane32Swap; }
 
   bool hasMinimum3Maximum3F32() const {
     return HasMinimum3Maximum3F32;
