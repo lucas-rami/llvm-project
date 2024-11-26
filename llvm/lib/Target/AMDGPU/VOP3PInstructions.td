@@ -144,6 +144,11 @@ def : VOP3PSatPat<usubsat, V_PK_SUB_U16>;
 def : VOP3PSatPat<ssubsat, V_PK_SUB_I16>;
 } // End SubtargetPredicate = HasVOP3PInsts
 
+let SubtargetPredicate = HasMinimum3Maximum3PKF16, FPDPRounding = 1 in {
+defm V_PK_MINIMUM3_F16 : VOP3PInst<"v_pk_minimum3_f16", VOP3P_Profile<VOP_V2F16_V2F16_V2F16_V2F16>>;
+defm V_PK_MAXIMUM3_F16 : VOP3PInst<"v_pk_maximum3_f16", VOP3P_Profile<VOP_V2F16_V2F16_V2F16_V2F16>>;
+}
+
 // TODO: Make sure we're doing the right thing with denormals. Note
 // that FMA and MAD will differ.
 multiclass MadFmaMixPats<SDPatternOperator fma_like,
@@ -2052,6 +2057,9 @@ defm V_PK_ADD_F16 : VOP3P_Real_vi <0x0f>;
 defm V_PK_MUL_F16 : VOP3P_Real_vi <0x10>;
 defm V_PK_MIN_F16 : VOP3P_Real_vi <0x11>;
 defm V_PK_MAX_F16 : VOP3P_Real_vi <0x12>;
+
+defm V_PK_MINIMUM3_F16 : VOP3P_Real_vi <0x1b>;
+defm V_PK_MAXIMUM3_F16 : VOP3P_Real_vi <0x1c>;
 
 let OtherPredicates = [HasMadMixInsts] in {
 defm V_MAD_MIX_F32 : VOP3P_Real_vi <0x20>;
