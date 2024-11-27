@@ -352,6 +352,9 @@ private:
   void renderDstSelToOpSelXForm(MachineInstrBuilder &MIB,
                                 const MachineInstr &MI, int OpIdx) const;
 
+  void renderSrcSelToOpSelXForm(MachineInstrBuilder &MIB,
+                                const MachineInstr &MI, int OpIdx) const;
+
   void renderNegateImm(MachineInstrBuilder &MIB, const MachineInstr &MI,
                        int OpIdx) const;
 
