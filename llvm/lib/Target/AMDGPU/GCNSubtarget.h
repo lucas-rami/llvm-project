@@ -1265,6 +1265,8 @@ public:
 
   bool hasVALUTransUseHazard() const { return HasVALUTransUseHazard; }
 
+  bool hasCvtScaleForwardingHazard() const { return GFX950Insts; }
+
   bool hasForceStoreSC0SC1() const { return HasForceStoreSC0SC1; }
 
   bool requiresCodeObjectV6() const { return RequiresCOV6; }
