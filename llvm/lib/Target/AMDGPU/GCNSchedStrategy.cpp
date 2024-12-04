@@ -1103,9 +1103,10 @@ bool PreRARematStage::initGCNSchedStage() {
   // if there is another pass after this pass.
   assert(!S.hasNextStage());
 
-  if (!collectRematerializableInstructions())
+  std::vector<RematInstruction> RematInstructions;
+  if (!canIncreaseOccupancy(RematInstructions))
     return false;
-  sinkTriviallyRematInsts(ST, TII);
+  sinkTriviallyRematInsts(RematInstructions, ST, TII);
 
   LLVM_DEBUG(
       dbgs() << "Retrying function scheduling with improved occupancy of "
@@ -1401,8 +1402,7 @@ GCNSchedStage::getScheduleMetrics(const std::vector<SUnit> &InputSchedule) {
 #ifndef NDEBUG
   LLVM_DEBUG(
       printScheduleModel(ReadyCyclesSorted);
-      dbgs() << "\n\t"
-             << "Metric: "
+      dbgs() << "\n\t" << "Metric: "
              << (SumBubbles
                      ? (SumBubbles * ScheduleMetrics::ScaleFactor) / CurrCycle
                      : 1)
@@ -1437,8 +1437,7 @@ GCNSchedStage::getScheduleMetrics(const GCNScheduleDAGMILive &DAG) {
 #ifndef NDEBUG
   LLVM_DEBUG(
       printScheduleModel(ReadyCyclesSorted);
-      dbgs() << "\n\t"
-             << "Metric: "
+      dbgs() << "\n\t" << "Metric: "
              << (SumBubbles
                      ? (SumBubbles * ScheduleMetrics::ScaleFactor) / CurrCycle
                      : 1)
@@ -1621,7 +1620,8 @@ void GCNSchedStage::revertScheduling() {
 /// Allows to easily filter for this stage's debug output.
 #define RA_DEBUG(X) LLVM_DEBUG(dbgs() << "[PreRARemat] "; X;)
 
-bool PreRARematStage::collectRematerializableInstructions() {
+bool PreRARematStage::canIncreaseOccupancy(
+    std::vector<RematInstruction> &RematInstructions) {
   const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(DAG.TRI);
 
   RA_DEBUG(dbgs() << "Collecting rematerializable instructions\n");
@@ -1756,8 +1756,9 @@ bool PreRARematStage::collectRematerializableInstructions() {
   return false;
 }
 
-void PreRARematStage::sinkTriviallyRematInsts(const GCNSubtarget &ST,
-                                              const TargetInstrInfo *TII) {
+void PreRARematStage::sinkTriviallyRematInsts(
+    ArrayRef<RematInstruction> RematInstructions, const GCNSubtarget &ST,
+    const TargetInstrInfo *TII) {
   // Collect regions whose live-ins or register pressure will change due to
   // rematerialization, and map those whose maximum RP we need to fully
   // recompute at the end to true.
@@ -1766,11 +1767,7 @@ void PreRARematStage::sinkTriviallyRematInsts(const GCNSubtarget &ST,
   DenseMap<MachineInstr *, MachineInstr *> InsertedMIToOldDef;
   LiveIntervals *LIS = DAG.LIS;
 
-  // TODO: In the spirit of rematerializing the minimum number of instructions
-  // to increase occupancy, here we could sort the list of rematerializable
-  // instructions in decreasing order of "expected profitability" so that we end
-  // up moving as few instructions as possible in the loop below.
-  for (RematInstruction &Remat : RematInstructions) {
+  for (const RematInstruction &Remat : RematInstructions) {
     MachineInstr *DefMI = Remat.RematMI;
     MachineBasicBlock::iterator InsertPos(Remat.UseMI);
     Register Reg = DefMI->getOperand(0).getReg();
