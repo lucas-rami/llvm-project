@@ -50,6 +50,10 @@ void test_s_wait_event_export_ready() {
 
 // CHECK-LABEL: @test_global_add_f32
 // CHECK: {{.*}}call{{.*}} float @llvm.amdgcn.global.atomic.fadd.f32.p1.f32(ptr addrspace(1) %{{.*}}, float %{{.*}})
+#if !defined(__SPIRV__)
 void test_global_add_f32(float *rtn, global float *addr, float x) {
+#else
+void test_global_add_f32(float *rtn, __attribute__((address_space(1))) float *addr, float x) {
+#endif
   *rtn = __builtin_amdgcn_global_atomic_fadd_f32(addr, x);
 }
