@@ -1650,11 +1650,12 @@ bool PreRARematStage::canIncreaseOccupancy(
   if (OptRegions.empty())
     return false;
 
-  // Tracks estimated rematerialization gains (i.e., reduction in RP) for
-  // this instruction in each optimizable region.
-  auto ReduceRPInRegion = [&](auto OptIt, unsigned I,
-                              LaneBitmask Mask) -> bool {
+  // Accounts for a reduction in RP in an optimizable region. Returns whether we
+  // estimate that we have identified enough rematerialization opportunities to
+  // increase function occupancy.
+  auto ReduceRPInRegion = [&](auto OptIt, LaneBitmask Mask) -> bool {
     auto NumRegs = SIRegisterInfo::getNumCoveredRegs(Mask);
+    unsigned I = OptIt->getFirst();
     unsigned &RPExcess = OptIt->getSecond();
     if (NumRegs >= RPExcess) {
       OptRegions.erase(I);
@@ -1708,7 +1709,7 @@ bool PreRARematStage::canIncreaseOccupancy(
         RematUseful = true;
         LaneBitmask RegMask =
             DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I)[Reg];
-        if (ReduceRPInRegion(It, I, RegMask))
+        if (ReduceRPInRegion(It, RegMask))
           return true;
       }
 
@@ -1729,7 +1730,7 @@ bool PreRARematStage::canIncreaseOccupancy(
         // instruction's use.
         if (auto It = OptRegions.find(LVRegion); It != OptRegions.end()) {
           RematUseful = true;
-          if (ReduceRPInRegion(It, LVRegion, DAG.LiveIns[LVRegion][Reg]))
+          if (ReduceRPInRegion(It, DAG.LiveIns[LVRegion][Reg]))
             return true;
         } else {
           LLVM_DEBUG(dbgs() << "unoptimizable region\n");
