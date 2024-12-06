@@ -371,7 +371,7 @@ unsigned GCNSubtarget::getOccupancyWithNumVGPRs(unsigned NumVGPRs) const {
 }
 
 unsigned GCNSubtarget::getNumVGPRsToIncreaseOccupancy(unsigned NumVGPRs) const {
-  return AMDGPU::IsaInfo::getNumVGPRsToIncreaseWavesPerEU(this, NumVGPRs);
+  return AMDGPU::IsaInfo::getVGPRReductionToIncreaseWavesPerEU(this, NumVGPRs);
 }
 
 unsigned
