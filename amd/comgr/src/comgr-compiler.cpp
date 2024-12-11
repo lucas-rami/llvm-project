@@ -81,7 +81,10 @@
 #include "llvm/Support/WithColor.h"
 #include "llvm/TargetParser/Host.h"
 
+#ifndef COMGR_DISABLE_SPIRV
 #include "LLVMSPIRVLib/LLVMSPIRVLib.h"
+#endif
+
 #include "time-stat/ts-interface.h"
 
 #include <csignal>
@@ -1852,6 +1855,12 @@ amd_comgr_status_t AMDGPUCompiler::linkToExecutable() {
 }
 
 amd_comgr_status_t AMDGPUCompiler::translateSpirvToBitcode() {
+#ifdef COMGR_DISABLE_SPIRV
+  LogS << "Calling AMDGPUCompiler::translateSpirvToBitcode() not supported "
+    << "Comgr is built with -DCOMGR_DISABLE_SPIRV. Re-build LLVM and Comgr "
+    << "with LLVM-SPIRV-Translator support to continue.\n";
+  return AMD_COMGR_STATUS_ERROR;
+#else
   if (auto Status = createTmpDirs()) {
     return Status;
   }
@@ -1906,6 +1915,7 @@ amd_comgr_status_t AMDGPUCompiler::translateSpirvToBitcode() {
   }
 
   return AMD_COMGR_STATUS_SUCCESS;
+#endif
 }
 
 AMDGPUCompiler::AMDGPUCompiler(DataAction *ActionInfo, DataSet *InSet,
