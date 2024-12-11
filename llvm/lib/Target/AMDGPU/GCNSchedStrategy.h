@@ -424,8 +424,6 @@ public:
 /// sinking trivially rematerializable instructions to their use. When the stage
 /// estimates increasing occupancy is possible, as few instructions as possible
 /// are rematerialized to reduce potential negative effects on function latency.
-///
-/// TODO: We should extend this to work on SGPRs and AGPRs as well.
 class PreRARematStage : public GCNSchedStage {
 private:
   /// A trivially rematerializable VGPR-defining instruction along with

@@ -39,6 +39,10 @@ struct GCNRegPressure {
     TOTAL_KINDS
   };
 
+  /// For subtargets with a unified register file, the granularity of the offset
+  /// of the first AccVGPR in the unified register file.
+  static const unsigned AccumOffset = 4;
+
   GCNRegPressure() {
     clear();
   }
@@ -53,7 +57,7 @@ struct GCNRegPressure {
   /// UnifiedVGPRFile
   unsigned getVGPRNum(bool UnifiedVGPRFile) const {
     if (UnifiedVGPRFile) {
-      return Value[AGPR32] ? alignTo(Value[VGPR32], 4) + Value[AGPR32]
+      return Value[AGPR32] ? alignTo(Value[VGPR32], AccumOffset) + Value[AGPR32]
                            : Value[VGPR32] + Value[AGPR32];
     }
     return std::max(Value[VGPR32], Value[AGPR32]);

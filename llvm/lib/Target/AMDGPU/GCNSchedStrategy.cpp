@@ -30,6 +30,7 @@
 #include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/RegisterClassInfo.h"
+#include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/MC/LaneBitmask.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -323,7 +324,7 @@ void GCNSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
                                          const RegPressureTracker &RPTracker,
                                          SchedCandidate &Cand,
                                          bool IsBottomUp) {
-  const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo*>(TRI);
+  const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
   ArrayRef<unsigned> Pressure = RPTracker.getRegSetPressureAtPos();
   unsigned SGPRPressure = 0;
   unsigned VGPRPressure = 0;
@@ -1473,50 +1474,160 @@ void GCNSchedStage::revertScheduling() {
 /// Allows to easily filter for this stage's debug output.
 #define RA_DEBUG(X) LLVM_DEBUG(dbgs() << "[PreRARemat] "; X;)
 
+namespace {
+
+// Models excess register pressure in each register class for a region at
+// minimum occupancy.
+struct ExcessPressure {
+  unsigned ExcessSGPRs;
+
+  ExcessPressure(const GCNSubtarget &ST, const GCNRegPressure &RP)
+      : ExcessSGPRs(ST.getNumSGPRsToIncreaseOccupancy(RP.getSGPRNum())) {}
+
+  virtual bool reduceSGPRPressure(unsigned NumSGPRs) {
+    return simpleReduction(ExcessSGPRs, NumSGPRs);
+  }
+
+  virtual bool reduceVGPRPressure(unsigned NumVGPRs) = 0;
+
+  virtual bool reduceAGPRPressure(unsigned NumVGPRs) = 0;
+
+  virtual bool occupancyIncreased() const = 0;
+
+  virtual ~ExcessPressure() = default;
+
+protected:
+  static bool simpleReduction(unsigned &ExcessRegs, unsigned NumRegs) {
+    if (ExcessRegs) {
+      ExcessRegs -= std::min(ExcessRegs, NumRegs);
+      return true;
+    }
+    return false;
+  }
+};
+
+struct NonUnifiedRegFilePressure : public ExcessPressure {
+  unsigned ExcessVGPRs = 0;
+  unsigned ExcessAGPRs = 0;
+
+  /// We use the same logic for computing the number of AGPRs to increase
+  /// occupancy as for arch VGPRs; this assumes that the allocation granule and
+  /// total number of available registers is the same between both.
+  NonUnifiedRegFilePressure(const GCNSubtarget &ST, const GCNRegPressure &RP)
+      : ExcessPressure(ST, RP),
+        ExcessVGPRs(ST.getNumVGPRsToIncreaseOccupancy(RP.getArchVGPRNum())),
+        ExcessAGPRs(ST.getNumVGPRsToIncreaseOccupancy(RP.getAGPRNum())) {}
+
+  bool reduceVGPRPressure(unsigned NumVGPRs) override {
+    return simpleReduction(ExcessVGPRs, NumVGPRs);
+  };
+
+  bool reduceAGPRPressure(unsigned NumAGPRs) override {
+    return simpleReduction(ExcessAGPRs, NumAGPRs);
+  };
+
+  bool occupancyIncreased() const override {
+    return ExcessSGPRs == 0 && ExcessVGPRs == 0 && ExcessAGPRs == 0;
+  }
+};
+
+struct UnifiedRegFilePressure : public ExcessPressure {
+  const unsigned NumUsedArchVGPRs;
+  const unsigned NumUsedAGPRs;
+  const unsigned NumWastedArchVGPRs;
+  const unsigned NumVGPRToSave;
+
+  unsigned NumSavedArchVGPRs = 0;
+  unsigned NumSavedAGPRs = 0;
+
+  UnifiedRegFilePressure(const GCNSubtarget &ST, const GCNRegPressure &RP)
+      : ExcessPressure(ST, RP), NumUsedArchVGPRs(RP.getArchVGPRNum()),
+        NumUsedAGPRs(RP.getAGPRNum()),
+        NumWastedArchVGPRs(
+            alignTo(NumUsedArchVGPRs, GCNRegPressure::AccumOffset) -
+            NumUsedArchVGPRs),
+        NumVGPRToSave(ST.getNumVGPRsToIncreaseOccupancy(RP.getVGPRNum(true))) {}
+
+  bool reduceVGPRPressure(unsigned NumVGPRs) override {
+    NumSavedArchVGPRs += NumVGPRs;
+    return true;
+  };
+
+  bool reduceAGPRPressure(unsigned NumAGPRs) override {
+    NumSavedAGPRs += NumAGPRs;
+    return true;
+  };
+
+  bool occupancyIncreased() const override {
+    if (ExcessSGPRs)
+      return false;
+    if (NumUsedAGPRs == NumSavedAGPRs) {
+      // When no AGPRs are used the calculation for the total number of used
+      // VGPRs slightly changes. We no longer have to account for the
+      // granularity of the offset at which AGPRs can start to be allocated, so
+      // we may reclaim a few ArchVGPRs "for free" there.
+      return NumSavedArchVGPRs + NumWastedArchVGPRs >=
+             NumVGPRToSave - NumUsedAGPRs;
+    }
+    // The AGPR allocation offset's granularity makes it so that saving an
+    // ArchVGPR does not necessarily decrease the total number of VGPRs the
+    // region requires.
+    unsigned NumActuallySavedArchVGPRs =
+        NumUsedArchVGPRs + NumWastedArchVGPRs -
+        alignTo(NumUsedArchVGPRs - NumSavedArchVGPRs,
+                GCNRegPressure::AccumOffset);
+    return NumActuallySavedArchVGPRs >= NumVGPRToSave - NumSavedAGPRs;
+  }
+};
+
+} // namespace
+
 bool PreRARematStage::canIncreaseOccupancy(
     SmallVectorImpl<RematInstruction> &RematInstructions) {
   const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(DAG.TRI);
 
   RA_DEBUG(dbgs() << "Collecting rematerializable instructions\n");
 
-  // Maps optimizable regions (i.e., regions at minimum and VGPR-limited
-  // occupancy) to the numbers of VGPRs that must be deducted from their maximum
-  // VGPR pressure for their occupancy to be increased by one.
-  DenseMap<unsigned, unsigned> OptRegions;
+  // Maps optimizable regions (i.e., regions at minimum occupancy) to the
+  // numbers of registers of each class that must be deducted from their class's
+  // RP for their occupancy to be increased by one.
+  DenseMap<unsigned, ExcessPressure *> OptRegions;
   for (unsigned I = 0, E = DAG.Regions.size(); I != E; ++I) {
     if (!DAG.RegionsWithMinOcc[I])
       continue;
     GCNRegPressure &RP = DAG.Pressure[I];
-
-    // We do not rematerialize SGPR-defining regions yet so do not bother
-    // optimizing regions whose occupancy is SGPR-limited.
-    if (ST.getOccupancyWithNumSGPRs(RP.getSGPRNum()) == DAG.MinOccupancy)
-      continue;
-
-    unsigned NumVGPRs = RP.getVGPRNum(ST.hasGFX90AInsts());
-    unsigned NumToIncreaseOcc = ST.getNumVGPRsToIncreaseOccupancy(NumVGPRs);
-    OptRegions.insert({I, NumToIncreaseOcc});
-    RA_DEBUG(dbgs() << "Region " << I << " has min. occupancy: decrease by "
-                    << NumToIncreaseOcc << " VGPR(s) to improve occupancy\n");
+    if (ST.hasGFX90AInsts())
+      OptRegions.insert({I, new UnifiedRegFilePressure{ST, RP}});
+    else
+      OptRegions.insert({I, new NonUnifiedRegFilePressure{ST, RP}});
   }
   if (OptRegions.empty())
     return false;
 
-  // Accounts for a reduction in RP in an optimizable region. Returns whether we
-  // estimate that we have identified enough rematerialization opportunities to
-  // increase function occupancy.
-  auto ReduceRPInRegion = [&](auto OptIt, LaneBitmask Mask) -> bool {
+  // Accounts for a reduction in RP in an optimizable region. Sets Progress
+  // to true if the rematerialization reduces pressure in a RegClass that still
+  // needs to be optimized. Returns whether we estimate that we have identified
+  // enough rematerialization opportunities to increase function occupancy.
+  auto ReduceRPInRegion = [&](auto OptIt, LaneBitmask Mask,
+                              const TargetRegisterClass *RegClass,
+                              bool &Progress) -> bool {
     auto NumRegs = SIRegisterInfo::getNumCoveredRegs(Mask);
+    assert(NumRegs && "no registers covered by remat. instruction");
     unsigned I = OptIt->getFirst();
-    unsigned &RPExcess = OptIt->getSecond();
-    if (NumRegs >= RPExcess) {
+    ExcessPressure &ExcessRP = *OptIt->getSecond();
+    if (SRI->isSGPRClass(RegClass))
+      Progress |= ExcessRP.reduceSGPRPressure(NumRegs);
+    else if (SRI->isVGPRClass(RegClass))
+      Progress |= ExcessRP.reduceVGPRPressure(NumRegs);
+    else if (SRI->isAGPRClass(RegClass))
+      Progress |= ExcessRP.reduceAGPRPressure(NumRegs);
+    else
+      llvm_unreachable("unknown register class");
+
+    if (ExcessRP.occupancyIncreased()) {
+      delete &ExcessRP;
       OptRegions.erase(I);
-      LLVM_DEBUG(dbgs() << "sinking increases occupancy in region " << I
-                        << '\n');
-    } else {
-      RPExcess -= NumRegs;
-      LLVM_DEBUG(dbgs() << "sinking reduces excess pressure in region " << I
-                        << " by " << NumRegs << " (" << RPExcess << " left)\n");
+      RA_DEBUG(dbgs() << "    Occupancy increased in region " << I << "\n");
     }
     return OptRegions.empty();
   };
@@ -1533,10 +1644,12 @@ bool PreRARematStage::canIncreaseOccupancy(
       if (!isTriviallyReMaterializable(DefMI))
         continue;
 
-      // We only support rematerializing virtual VGPRs with one definition.
+      // We only support virtual registers with one definition.
       Register Reg = DefMI.getOperand(0).getReg();
+      const TargetRegisterClass *RegClass = DAG.MRI.getRegClass(Reg);
       if (!Reg.isVirtual() || !DAG.LIS->hasInterval(Reg) ||
-          !SRI->isVGPRClass(DAG.MRI.getRegClass(Reg)) ||
+          !(SRI->isSGPRClass(RegClass) || SRI->isVGPRClass(RegClass) ||
+            SRI->isAGPRClass(RegClass)) ||
           !DAG.MRI.hasOneDef(Reg))
         continue;
 
@@ -1558,10 +1671,9 @@ bool PreRARematStage::canIncreaseOccupancy(
         // maximum RP in the region is reached somewhere between the defining
         // instruction and the end of the region.
         RA_DEBUG(dbgs() << "  Instruction's defining region is optimizable: ");
-        RematUseful = true;
         LaneBitmask RegMask =
             DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I)[Reg];
-        if (ReduceRPInRegion(It, RegMask))
+        if (ReduceRPInRegion(It, RegMask, RegClass, RematUseful))
           return true;
       }
 
@@ -1576,13 +1688,13 @@ bool PreRARematStage::canIncreaseOccupancy(
 
         // Account for the reduction in RP due to the rematerialization in an
         // optimizable region in which the defined register is a live-in. This
-        // is exact for live-through region but optimistic in the using region,
-        // where RP is actually reduced only if maximum RP is reached somewhere
-        // between the beginning of the region and the rematerializable
-        // instruction's use.
+        // is exact for live-through region but optimistic in the using
+        // region, where RP is actually reduced only if maximum RP is reached
+        // somewhere between the beginning of the region and the
+        // rematerializable instruction's use.
         if (auto It = OptRegions.find(LVRegion); It != OptRegions.end()) {
-          RematUseful = true;
-          if (ReduceRPInRegion(It, DAG.LiveIns[LVRegion][Reg]))
+          if (ReduceRPInRegion(It, DAG.LiveIns[LVRegion][Reg], RegClass,
+                               RematUseful))
             return true;
         } else {
           LLVM_DEBUG(dbgs() << "unoptimizable region\n");
@@ -1593,14 +1705,17 @@ bool PreRARematStage::canIncreaseOccupancy(
       // region then there is no point in rematerializing it.
       if (!RematUseful) {
         RematInstructions.pop_back();
-        RA_DEBUG(
-            dbgs()
-            << "  No impact on any optimizable region, dropping instruction\n");
+        RA_DEBUG(dbgs() << "  No impact on any optimizable region, dropping "
+                           "instruction\n");
       }
     }
   }
 
   RA_DEBUG(dbgs() << "Cannot increase occupancy through rematerialization\n");
+
+  // Free the remaining heap-allocated map values
+  for (auto &[_, ExcessRP] : OptRegions)
+    delete ExcessRP;
   return false;
 }
 
@@ -1662,8 +1777,8 @@ void PreRARematStage::sinkTriviallyRematInsts(
       }
     }
 
-    // RP in the region from which the instruction was rematerialized may or may
-    // not change, recompute-it fully later.
+    // RP in the region from which the instruction was rematerialized may or
+    // may not change, recompute-it fully later.
     ImpactedRegions[Remat.DefRegion] = true;
   }
 
@@ -1745,10 +1860,10 @@ bool PreRARematStage::isTriviallyReMaterializable(const MachineInstr &MI) {
   return true;
 }
 
-// When removing, we will have to check both beginning and ending of the region.
-// When inserting, we will only have to check if we are inserting NewMI in front
-// of a scheduling region and do not need to check the ending since we will only
-// ever be inserting before an already existing MI.
+// When removing, we will have to check both beginning and ending of the
+// region. When inserting, we will only have to check if we are inserting
+// NewMI in front of a scheduling region and do not need to check the ending
+// since we will only ever be inserting before an already existing MI.
 void GCNScheduleDAGMILive::updateRegionBoundaries(
     SmallVectorImpl<std::pair<MachineBasicBlock::iterator,
                               MachineBasicBlock::iterator>> &RegionBoundaries,

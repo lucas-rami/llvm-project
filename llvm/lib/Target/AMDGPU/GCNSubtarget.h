@@ -1364,6 +1364,8 @@ public:
   /// SGPRs
   unsigned getOccupancyWithNumSGPRs(unsigned SGPRs) const;
 
+  unsigned getNumSGPRsToIncreaseOccupancy(unsigned SGPRs) const;
+
   /// Return the maximum number of waves per SIMD for kernels using \p VGPRs
   /// VGPRs
   unsigned getOccupancyWithNumVGPRs(unsigned VGPRs) const;
@@ -1372,6 +1374,7 @@ public:
   /// VGPRs to increase occupancy by 1. Returns 0 when using \p VGPRs VGPRs
   /// already results in maximum occupancy.
   unsigned getNumVGPRsToIncreaseOccupancy(unsigned VGPRs) const;
+
 
   /// Return occupancy for the given function. Used LDS and a number of
   /// registers if provided.
