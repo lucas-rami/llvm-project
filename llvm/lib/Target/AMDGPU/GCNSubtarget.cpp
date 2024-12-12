@@ -405,7 +405,7 @@ unsigned GCNSubtarget::computeOccupancy(const Function &F, unsigned LDSSize,
                                         unsigned NumSGPRs,
                                         unsigned NumVGPRs) const {
   unsigned Occupancy = std::min(getMaxWavesPerEU(),
-                                getOccupancyWithLocalMemSize(LDSSize, F).first);
+                                getOccupancyWithWorkGroups(LDSSize, F).first);
   if (NumSGPRs)
     Occupancy = std::min(Occupancy, getOccupancyWithNumSGPRs(NumSGPRs));
   if (NumVGPRs)

@@ -81,11 +81,11 @@ public:
   AMDGPUSubtarget(Triple TT);
 
   static const AMDGPUSubtarget &get(const MachineFunction &MF);
-  static const AMDGPUSubtarget &get(const TargetMachine &TM,
-                                    const Function &F);
+  static const AMDGPUSubtarget &get(const TargetMachine &TM, const Function &F);
 
   /// \returns Default range flat work group size for a calling convention.
-  std::pair<unsigned, unsigned> getDefaultFlatWorkGroupSize(CallingConv::ID CC) const;
+  std::pair<unsigned, unsigned>
+  getDefaultFlatWorkGroupSize(CallingConv::ID CC) const;
 
   /// \returns Subtarget's default pair of minimum/maximum flat work group sizes
   /// for function \p F, or minimum/maximum flat work group sizes explicitly
@@ -126,30 +126,34 @@ public:
   unsigned getMaxLocalMemSizeWithWaveCount(unsigned WaveCount,
                                            const Function &) const;
 
-  unsigned getOccupancyWithLocalMemSize(unsigned LDSNumGroups,
-                                        unsigned WorkGroupSize) const;
+  /// Subtarget's occupancy, in number of waves per EU, that can be achieved
+  /// when a CU only runs workgroups of size \p WorkGroupSize and when the total
+  /// number of concurrent workgroups on the CU is limited by LDS usage to \p
+  /// LDSMaxGroups.
+  unsigned getOccupancyWithWorkGroups(unsigned LDSMaxGroups,
+                                      unsigned WorkGroupSize) const;
+                                      
+  /// Subtarget's minimum/maximum occupancy, in number of waves per EU, that can
+  /// be achieved when the only function running on a CU is \p F and each
+  /// workgroup running the function requires \p LDSBytes bytes of LDS space.
+  /// This notably depends on the range of allowed flat group sizes for the
+  /// function and hardware characteristics.
+  std::pair<unsigned, unsigned>
+  getOccupancyWithWorkGroups(uint32_t LDSBytes, const Function &F) const;
 
   /// Subtarget's minimum/maximum occupancy, in number of waves per EU, that can
-  /// be achieved when only the given function is running on the machine; and
-  /// taking into account the overall number of wave slots, the (maximum) workgroup
-  /// size, and the per-workgroup LDS allocation size.
+  /// be achieved when the only function running on a CU is \p MF. This notably
+  /// depends on the range of allowed flat group sizes for the function, the
+  /// amount of per-workgroup LDS space required by the function, and hardware
+  /// characteristics.
   std::pair<unsigned, unsigned>
-  getOccupancyWithLocalMemSize(uint32_t Bytes, const Function &F) const;
+  getOccupancyWithWorkGroups(const MachineFunction &MF) const;
 
-  std::pair<unsigned, unsigned>
-  getOccupancyWithLocalMemSize(const MachineFunction &MF) const;
+  bool isAmdHsaOS() const { return TargetTriple.getOS() == Triple::AMDHSA; }
 
-  bool isAmdHsaOS() const {
-    return TargetTriple.getOS() == Triple::AMDHSA;
-  }
+  bool isAmdPalOS() const { return TargetTriple.getOS() == Triple::AMDPAL; }
 
-  bool isAmdPalOS() const {
-    return TargetTriple.getOS() == Triple::AMDPAL;
-  }
-
-  bool isMesa3DOS() const {
-    return TargetTriple.getOS() == Triple::Mesa3D;
-  }
+  bool isMesa3DOS() const { return TargetTriple.getOS() == Triple::Mesa3D; }
 
   bool isMesaKernel(const Function &F) const;
 
@@ -157,17 +161,11 @@ public:
     return isAmdHsaOS() || isMesaKernel(F);
   }
 
-  bool isGCN() const {
-    return TargetTriple.getArch() == Triple::amdgcn;
-  }
+  bool isGCN() const { return TargetTriple.getArch() == Triple::amdgcn; }
 
-  bool isGCN3Encoding() const {
-    return GCN3Encoding;
-  }
+  bool isGCN3Encoding() const { return GCN3Encoding; }
 
-  bool has16BitInsts() const {
-    return Has16BitInsts;
-  }
+  bool has16BitInsts() const { return Has16BitInsts; }
 
   /// Return true if the subtarget supports True16 instructions.
   bool hasTrue16BitInsts() const { return HasTrue16BitInsts; }
@@ -180,13 +178,9 @@ public:
   // supported and the support for fake True16 instructions is removed.
   bool useRealTrue16Insts() const;
 
-  bool hasBF16ConversionInsts() const {
-    return HasBF16ConversionInsts;
-  }
+  bool hasBF16ConversionInsts() const { return HasBF16ConversionInsts; }
 
-  bool hasMadMixInsts() const {
-    return HasMadMixInsts;
-  }
+  bool hasMadMixInsts() const { return HasMadMixInsts; }
 
   bool hasFP8ConversionScaleInsts() const { return HasFP8ConversionScaleInsts; }
 
@@ -194,77 +188,50 @@ public:
 
   bool hasFP4ConversionScaleInsts() const { return HasFP4ConversionScaleInsts; }
 
-  bool hasFP6BF6ConversionScaleInsts() const { return HasFP6BF6ConversionScaleInsts; }
+  bool hasFP6BF6ConversionScaleInsts() const {
+    return HasFP6BF6ConversionScaleInsts;
+  }
 
-  bool hasF16BF16ToFP6BF6ConversionScaleInsts() const { return HasF16BF16ToFP6BF6ConversionScaleInsts; }
+  bool hasF16BF16ToFP6BF6ConversionScaleInsts() const {
+    return HasF16BF16ToFP6BF6ConversionScaleInsts;
+  }
 
   bool hasF32ToF16BF16ConversionSRInsts() const {
     return HasF32ToF16BF16ConversionSRInsts;
   }
 
-  bool hasMadMacF32Insts() const {
-    return HasMadMacF32Insts || !isGCN();
-  }
+  bool hasMadMacF32Insts() const { return HasMadMacF32Insts || !isGCN(); }
 
-  bool hasDsSrc2Insts() const {
-    return HasDsSrc2Insts;
-  }
+  bool hasDsSrc2Insts() const { return HasDsSrc2Insts; }
 
-  bool hasSDWA() const {
-    return HasSDWA;
-  }
+  bool hasSDWA() const { return HasSDWA; }
 
-  bool hasVOP3PInsts() const {
-    return HasVOP3PInsts;
-  }
+  bool hasVOP3PInsts() const { return HasVOP3PInsts; }
 
-  bool hasMulI24() const {
-    return HasMulI24;
-  }
+  bool hasMulI24() const { return HasMulI24; }
 
-  bool hasMulU24() const {
-    return HasMulU24;
-  }
+  bool hasMulU24() const { return HasMulU24; }
 
-  bool hasSMulHi() const {
-    return HasSMulHi;
-  }
+  bool hasSMulHi() const { return HasSMulHi; }
 
-  bool hasInv2PiInlineImm() const {
-    return HasInv2PiInlineImm;
-  }
+  bool hasInv2PiInlineImm() const { return HasInv2PiInlineImm; }
 
-  bool hasFminFmaxLegacy() const {
-    return HasFminFmaxLegacy;
-  }
+  bool hasFminFmaxLegacy() const { return HasFminFmaxLegacy; }
 
-  bool hasTrigReducedRange() const {
-    return HasTrigReducedRange;
-  }
+  bool hasTrigReducedRange() const { return HasTrigReducedRange; }
 
-  bool hasFastFMAF32() const {
-    return FastFMAF32;
-  }
+  bool hasFastFMAF32() const { return FastFMAF32; }
 
-  bool isPromoteAllocaEnabled() const {
-    return EnablePromoteAlloca;
+  bool isPromoteAllocaEnabled() const { return EnablePromoteAlloca; }
+  unsigned getWavefrontSize() const { return 1 << WavefrontSizeLog2; }
 
-  }
-  unsigned getWavefrontSize() const {
-    return 1 << WavefrontSizeLog2;
-  }
-
-  unsigned getWavefrontSizeLog2() const {
-    return WavefrontSizeLog2;
-  }
+  unsigned getWavefrontSizeLog2() const { return WavefrontSizeLog2; }
 
   /// Return the maximum number of bytes of LDS available for all workgroups
   /// running on the same WGP or CU.
   /// For GFX10-GFX12 in WGP mode this is 128k even though each workgroup is
   /// limited to 64k.
-  unsigned getLocalMemorySize() const {
-    return LocalMemorySize;
-  }
+  unsigned getLocalMemorySize() const { return LocalMemorySize; }
 
   /// Return the maximum number of bytes of LDS that can be allocated to a
   /// single workgroup.

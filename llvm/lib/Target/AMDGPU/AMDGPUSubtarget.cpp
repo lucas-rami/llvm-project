@@ -56,8 +56,8 @@ AMDGPUSubtarget::getMaxLocalMemSizeWithWaveCount(unsigned NWaves,
 }
 
 unsigned
-AMDGPUSubtarget::getOccupancyWithLocalMemSize(unsigned LDSNumGroups,
-                                              unsigned WorkGroupSize) const {
+AMDGPUSubtarget::getOccupancyWithWorkGroups(unsigned LDSMaxGroups,
+                                            unsigned WorkGroupSize) const {
   // Compute the maximum number of workgroups of the specified size that can fit
   // entirely on a CU concurrently.
   const unsigned MaxWorkGroupsPerCu = getMaxWorkGroupsPerCU(WorkGroupSize);
@@ -68,11 +68,8 @@ AMDGPUSubtarget::getOccupancyWithLocalMemSize(unsigned LDSNumGroups,
   // This is based on the maximum amount of concurrent workgroups on a CU, a
   // function of work group size and LDS usage, as well as the number of waves
   // in each workgroup.
-  unsigned MaxWaves = std::min(MaxWorkGroupsPerCu, LDSNumGroups) *
+  unsigned MaxWaves = std::min(MaxWorkGroupsPerCu, LDSMaxGroups) *
                       divideCeil(WorkGroupSize, getWavefrontSize());
-
-  // FIXME: Does the final number of waves need to be a multiple of the group
-  // size?
 
   // Return the maximum number of waves on any EU, assuming that all wavefronts
   // are spread across all EUs as evenly as possible. Clamp to the maximum
@@ -81,29 +78,32 @@ AMDGPUSubtarget::getOccupancyWithLocalMemSize(unsigned LDSNumGroups,
 }
 
 std::pair<unsigned, unsigned>
-AMDGPUSubtarget::getOccupancyWithLocalMemSize(uint32_t Bytes,
-                                              const Function &F) const {
+AMDGPUSubtarget::getOccupancyWithWorkGroups(uint32_t LDSBytes,
+                                            const Function &F) const {
   // FIXME: Is there an allocation granularity for the LDS? If so we need to
   // make sure the amount of bytes is aligned on that granularity.
 
   // Compute occupancy restriction based on LDS usage.
-  const unsigned LDSNumGroups = getLocalMemorySize() / (Bytes ? Bytes : 1u);
-  
-  // Queried LDS size may be larger than available on a CU.
+  const unsigned LDSNumGroups = getLocalMemorySize() / std::max(LDSBytes, 1u);
+
+  // Queried LDS size may be larger than available on a CU, in which case we
+  // consider the only achievable occupancy to be 1, in line with what we
+  // consider the occupancy to be when the number of requested registers in a
+  // particular bank is higher than the number of available ones in that bank.
   if (!LDSNumGroups)
     return {1, 1};
 
   // The maximum group size (second element of the group size pair) will yield
   // the minimum occupancy so it is the first element of the returned pair.
   std::pair<unsigned, unsigned> WorkGroupSizeRange = getFlatWorkGroupSizes(F);
-  return {getOccupancyWithLocalMemSize(LDSNumGroups, WorkGroupSizeRange.second),
-          getOccupancyWithLocalMemSize(LDSNumGroups, WorkGroupSizeRange.first)};
+  return {getOccupancyWithWorkGroups(LDSNumGroups, WorkGroupSizeRange.second),
+          getOccupancyWithWorkGroups(LDSNumGroups, WorkGroupSizeRange.first)};
 }
 
 std::pair<unsigned, unsigned>
-AMDGPUSubtarget::getOccupancyWithLocalMemSize(const MachineFunction &MF) const {
+AMDGPUSubtarget::getOccupancyWithWorkGroups(const MachineFunction &MF) const {
   const auto *MFI = MF.getInfo<SIMachineFunctionInfo>();
-  return getOccupancyWithLocalMemSize(MFI->getLDSSize(), MF.getFunction());
+  return getOccupancyWithWorkGroups(MFI->getLDSSize(), MF.getFunction());
 }
 
 std::pair<unsigned, unsigned>

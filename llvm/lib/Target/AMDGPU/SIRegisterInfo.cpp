@@ -3626,7 +3626,7 @@ unsigned SIRegisterInfo::getRegPressureLimit(const TargetRegisterClass *RC,
                                              MachineFunction &MF) const {
   const SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
 
-  unsigned Occupancy = ST.getOccupancyWithLocalMemSize(MFI->getLDSSize(),
+  unsigned Occupancy = ST.getOccupancyWithWorkGroups(MFI->getLDSSize(),
                                                        MF.getFunction()).first;
   switch (RC->getID()) {
   default:
