@@ -126,11 +126,18 @@ public:
   unsigned getMaxLocalMemSizeWithWaveCount(unsigned WaveCount,
                                            const Function &) const;
 
-  /// Inverse of getMaxLocalMemWithWaveCount. Return the maximum wavecount if
-  /// the given LDS memory size is the only constraint.
-  unsigned getOccupancyWithLocalMemSize(uint32_t Bytes, const Function &) const;
+  unsigned getOccupancyWithLocalMemSize(unsigned LDSNumGroups,
+                                        unsigned WorkGroupSize) const;
 
-  unsigned getOccupancyWithLocalMemSize(const MachineFunction &MF) const;
+  /// Subtarget's minimum/maximum occupancy, in number of waves per EU, that can
+  /// be achieved when only the given function is running on the machine; and
+  /// taking into account the overall number of wave slots, the (maximum) workgroup
+  /// size, and the per-workgroup LDS allocation size.
+  std::pair<unsigned, unsigned>
+  getOccupancyWithLocalMemSize(uint32_t Bytes, const Function &F) const;
+
+  std::pair<unsigned, unsigned>
+  getOccupancyWithLocalMemSize(const MachineFunction &MF) const;
 
   bool isAmdHsaOS() const {
     return TargetTriple.getOS() == Triple::AMDHSA;
@@ -241,8 +248,8 @@ public:
 
   bool isPromoteAllocaEnabled() const {
     return EnablePromoteAlloca;
-  }
 
+  }
   unsigned getWavefrontSize() const {
     return 1 << WavefrontSizeLog2;
   }

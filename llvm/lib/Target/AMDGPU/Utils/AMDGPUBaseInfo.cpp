@@ -972,7 +972,7 @@ unsigned getMaxWorkGroupsPerCU(const MCSubtargetInfo *STI,
     return MaxWaves;
   }
 
-  unsigned MaxBarriers = 16;
+  unsigned MaxBarriers = 16 ;
   if (isGFX10Plus(*STI) && !STI->getFeatureBits().test(FeatureCuMode))
     MaxBarriers = 32;
 

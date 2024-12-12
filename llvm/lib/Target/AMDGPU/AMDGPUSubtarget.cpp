@@ -55,52 +55,52 @@ AMDGPUSubtarget::getMaxLocalMemSizeWithWaveCount(unsigned NWaves,
   return getLocalMemorySize() / WorkGroupsPerCU;
 }
 
-// FIXME: Should return min,max range.
-//
-// Returns the maximum occupancy, in number of waves per SIMD / EU, that can
-// be achieved when only the given function is running on the machine; and
-// taking into account the overall number of wave slots, the (maximum) workgroup
-// size, and the per-workgroup LDS allocation size.
-unsigned AMDGPUSubtarget::getOccupancyWithLocalMemSize(uint32_t Bytes,
-  const Function &F) const {
-  const unsigned MaxWorkGroupSize = getFlatWorkGroupSizes(F).second;
-  const unsigned MaxWorkGroupsPerCu = getMaxWorkGroupsPerCU(MaxWorkGroupSize);
+unsigned
+AMDGPUSubtarget::getOccupancyWithLocalMemSize(unsigned LDSNumGroups,
+                                              unsigned WorkGroupSize) const {
+  // Compute the maximum number of workgroups of the specified size that can fit
+  // entirely on a CU concurrently.
+  const unsigned MaxWorkGroupsPerCu = getMaxWorkGroupsPerCU(WorkGroupSize);
   if (!MaxWorkGroupsPerCu)
     return 0;
 
-  const unsigned WaveSize = getWavefrontSize();
+  // Compute the maximum number of waves that can be on the CU concurrently.
+  // This is based on the maximum amount of concurrent workgroups on a CU, a
+  // function of work group size and LDS usage, as well as the number of waves
+  // in each workgroup.
+  unsigned MaxWaves = std::min(MaxWorkGroupsPerCu, LDSNumGroups) *
+                      divideCeil(WorkGroupSize, getWavefrontSize());
 
-  // FIXME: Do we need to account for alignment requirement of LDS rounding the
-  // size up?
-  // Compute restriction based on LDS usage
-  unsigned NumGroups = getLocalMemorySize() / (Bytes ? Bytes : 1u);
+  // FIXME: Does the final number of waves need to be a multiple of the group
+  // size?
 
-  // This can be queried with more LDS than is possible, so just assume the
-  // worst.
-  if (NumGroups == 0)
-    return 1;
-
-  NumGroups = std::min(MaxWorkGroupsPerCu, NumGroups);
-
-  // Round to the number of waves per CU.
-  const unsigned MaxGroupNumWaves = divideCeil(MaxWorkGroupSize, WaveSize);
-  unsigned MaxWaves = NumGroups * MaxGroupNumWaves;
-
-  // Number of waves per EU (SIMD).
-  MaxWaves = divideCeil(MaxWaves, getEUsPerCU());
-
-  // Clamp to the maximum possible number of waves.
-  MaxWaves = std::min(MaxWaves, getMaxWavesPerEU());
-
-  // FIXME: Needs to be a multiple of the group size?
-  //MaxWaves = MaxGroupNumWaves * (MaxWaves / MaxGroupNumWaves);
-
-  assert(MaxWaves > 0 && MaxWaves <= getMaxWavesPerEU() &&
-         "computed invalid occupancy");
-  return MaxWaves;
+  // Return the maximum number of waves on any EU, assuming that all wavefronts
+  // are spread across all EUs as evenly as possible. Clamp to the maximum
+  // number of concurrent wavefronts that a EU can support.
+  return std::min(divideCeil(MaxWaves, getEUsPerCU()), getMaxWavesPerEU());
 }
 
-unsigned
+std::pair<unsigned, unsigned>
+AMDGPUSubtarget::getOccupancyWithLocalMemSize(uint32_t Bytes,
+                                              const Function &F) const {
+  // FIXME: Is there an allocation granularity for the LDS? If so we need to
+  // make sure the amount of bytes is aligned on that granularity.
+
+  // Compute occupancy restriction based on LDS usage.
+  const unsigned LDSNumGroups = getLocalMemorySize() / (Bytes ? Bytes : 1u);
+  
+  // Queried LDS size may be larger than available on a CU.
+  if (!LDSNumGroups)
+    return {1, 1};
+
+  // The maximum group size (second element of the group size pair) will yield
+  // the minimum occupancy so it is the first element of the returned pair.
+  std::pair<unsigned, unsigned> WorkGroupSizeRange = getFlatWorkGroupSizes(F);
+  return {getOccupancyWithLocalMemSize(LDSNumGroups, WorkGroupSizeRange.second),
+          getOccupancyWithLocalMemSize(LDSNumGroups, WorkGroupSizeRange.first)};
+}
+
+std::pair<unsigned, unsigned>
 AMDGPUSubtarget::getOccupancyWithLocalMemSize(const MachineFunction &MF) const {
   const auto *MFI = MF.getInfo<SIMachineFunctionInfo>();
   return getOccupancyWithLocalMemSize(MFI->getLDSSize(), MF.getFunction());
@@ -121,15 +121,15 @@ AMDGPUSubtarget::getDefaultFlatWorkGroupSize(CallingConv::ID CC) const {
   }
 }
 
-std::pair<unsigned, unsigned> AMDGPUSubtarget::getFlatWorkGroupSizes(
-  const Function &F) const {
+std::pair<unsigned, unsigned>
+AMDGPUSubtarget::getFlatWorkGroupSizes(const Function &F) const {
   // Default minimum/maximum flat work group sizes.
   std::pair<unsigned, unsigned> Default =
-    getDefaultFlatWorkGroupSize(F.getCallingConv());
+      getDefaultFlatWorkGroupSize(F.getCallingConv());
 
   // Requested minimum/maximum flat work group sizes.
   std::pair<unsigned, unsigned> Requested = AMDGPU::getIntegerPairAttribute(
-    F, "amdgpu-flat-work-group-size", Default);
+      F, "amdgpu-flat-work-group-size", Default);
 
   // Make sure requested minimum is less than requested maximum.
   if (Requested.first > Requested.second)
@@ -155,7 +155,7 @@ std::pair<unsigned, unsigned> AMDGPUSubtarget::getEffectiveWavesPerEU(
   // number of waves per execution unit to values implied by requested
   // minimum/maximum flat work group sizes.
   unsigned MinImpliedByFlatWorkGroupSize =
-    getWavesPerEUForWorkGroup(FlatWorkGroupSizes.second);
+      getWavesPerEUForWorkGroup(FlatWorkGroupSizes.second);
   Default.first = MinImpliedByFlatWorkGroupSize;
 
   // Make sure requested minimum is less than requested maximum.
@@ -167,8 +167,8 @@ std::pair<unsigned, unsigned> AMDGPUSubtarget::getEffectiveWavesPerEU(
       Requested.second > getMaxWavesPerEU())
     return Default;
 
-  // Make sure requested values are compatible with values implied by requested
-  // minimum/maximum flat work group sizes.
+  // Make sure requested values are compatible with values implied by
+  // requested minimum/maximum flat work group sizes.
   if (Requested.first < MinImpliedByFlatWorkGroupSize)
     return Default;
 
@@ -344,7 +344,8 @@ unsigned AMDGPUSubtarget::getKernArgSegmentSize(const Function &F,
     MaxAlign = std::max(MaxAlign, Alignment);
   }
 
-  // Being able to dereference past the end is useful for emitting scalar loads.
+  // Being able to dereference past the end is useful for emitting scalar
+  // loads.
   return alignTo(TotalSize, 4);
 }
 
@@ -355,13 +356,16 @@ AMDGPUDwarfFlavour AMDGPUSubtarget::getAMDGPUDwarfFlavour() const {
 
 const AMDGPUSubtarget &AMDGPUSubtarget::get(const MachineFunction &MF) {
   if (MF.getTarget().getTargetTriple().getArch() == Triple::amdgcn)
-    return static_cast<const AMDGPUSubtarget&>(MF.getSubtarget<GCNSubtarget>());
+    return static_cast<const AMDGPUSubtarget &>(
+        MF.getSubtarget<GCNSubtarget>());
   return static_cast<const AMDGPUSubtarget &>(MF.getSubtarget<R600Subtarget>());
 }
 
-const AMDGPUSubtarget &AMDGPUSubtarget::get(const TargetMachine &TM, const Function &F) {
+const AMDGPUSubtarget &AMDGPUSubtarget::get(const TargetMachine &TM,
+                                            const Function &F) {
   if (TM.getTargetTriple().getArch() == Triple::amdgcn)
-    return static_cast<const AMDGPUSubtarget&>(TM.getSubtarget<GCNSubtarget>(F));
+    return static_cast<const AMDGPUSubtarget &>(
+        TM.getSubtarget<GCNSubtarget>(F));
   return static_cast<const AMDGPUSubtarget &>(
       TM.getSubtarget<R600Subtarget>(F));
 }

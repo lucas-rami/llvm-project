@@ -183,7 +183,7 @@ void SIMachineFunctionInfo::limitOccupancy(const MachineFunction &MF) {
   limitOccupancy(getMaxWavesPerEU());
   const GCNSubtarget& ST = MF.getSubtarget<GCNSubtarget>();
   limitOccupancy(ST.getOccupancyWithLocalMemSize(getLDSSize(),
-                 MF.getFunction()));
+                 MF.getFunction()).first);
 }
 
 Register SIMachineFunctionInfo::addPrivateSegmentBuffer(

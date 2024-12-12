@@ -1135,7 +1135,7 @@ void GCNSchedStage::checkScheduling() {
   }
 
   unsigned TargetOccupancy =
-      std::min(S.getTargetOccupancy(), ST.getOccupancyWithLocalMemSize(MF));
+      std::min(S.getTargetOccupancy(), ST.getOccupancyWithLocalMemSize(MF).first);
   unsigned WavesAfter =
       std::min(TargetOccupancy, PressureAfter.getOccupancy(ST));
   unsigned WavesBefore =
