@@ -9,8 +9,8 @@ define fastcc i32 @foo() {
   ; CHECK-NEXT:   successors: %bb.1(0x80000000)
   ; CHECK-NEXT:   liveins: $sgpr12, $sgpr13, $sgpr14, $sgpr15, $vgpr31, $sgpr4_sgpr5, $sgpr6_sgpr7, $sgpr8_sgpr9, $sgpr10_sgpr11, $sgpr30_sgpr31
   ; CHECK-NEXT: {{  $}}
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION llvm_def_aspace_cfa $sgpr32_lo16, 0, 6
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION llvm_register_pair $pc_reg, $sgpr30_lo16, 32, $sgpr31_lo16, 32
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION llvm_def_aspace_cfa $sgpr32, 0, 6
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION llvm_register_pair $pc_reg, $sgpr30, 32, $sgpr31, 32
   ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined <badreg>
   ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined <badreg>
   ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined <badreg>
@@ -155,36 +155,36 @@ define fastcc i32 @foo() {
   ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined <badreg>
   ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined <badreg>
   ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined <badreg>
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr0_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr1_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr2_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr3_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr4_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr5_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr6_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr7_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr8_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr9_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr10_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr11_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr12_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr13_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr14_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr15_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr16_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr17_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr18_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr19_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr20_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr21_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr22_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr23_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr24_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr25_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr26_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr27_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr28_lo16
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr29_lo16
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr0
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr1
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr2
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr3
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr4
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr5
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr6
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr7
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr8
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr9
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr10
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr11
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr12
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr13
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr14
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr15
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr16
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr17
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr18
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr19
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr20
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr21
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr22
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr23
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr24
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr25
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr26
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr27
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr28
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $sgpr29
   ; CHECK-NEXT:   S_WAITCNT 0
   ; CHECK-NEXT:   $sgpr16 = S_MOV_B32 $sgpr33
   ; CHECK-NEXT:   $sgpr33 = S_MOV_B32 $sgpr32
@@ -193,8 +193,8 @@ define fastcc i32 @foo() {
   ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION offset <badreg>, 0
   ; CHECK-NEXT:   $exec_lo = S_MOV_B32 killed $sgpr17
   ; CHECK-NEXT:   $vgpr40 = V_WRITELANE_B32 killed $sgpr16, 2, undef $vgpr40
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION llvm_vector_registers $sgpr33_lo16, <badreg>, 2, 32
-  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION def_cfa_register $sgpr33_lo16
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION llvm_vector_registers $sgpr33, <badreg>, 2, 32
+  ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION def_cfa_register $sgpr33
   ; CHECK-NEXT:   $vgpr40 = V_WRITELANE_B32 killed $sgpr30, 0, $vgpr40, implicit-def $sgpr30_sgpr31, implicit $sgpr30_sgpr31
   ; CHECK-NEXT:   $sgpr32 = frame-setup S_ADDK_I32 $sgpr32, 512, implicit-def dead $scc
   ; CHECK-NEXT:   $vgpr40 = V_WRITELANE_B32 killed $sgpr31, 1, $vgpr40, implicit $sgpr30_sgpr31
@@ -226,7 +226,7 @@ define fastcc i32 @foo() {
   ; CHECK-NEXT:   $vgpr40 = BUFFER_LOAD_DWORD_OFFSET $sgpr0_sgpr1_sgpr2_sgpr3, $sgpr33, 0, 0, 0, implicit $exec :: (load (s32) from %stack.1, addrspace 5)
   ; CHECK-NEXT:   $exec_lo = S_MOV_B32 killed $sgpr5
   ; CHECK-NEXT:   $sgpr32 = frame-destroy S_ADDK_I32 $sgpr32, -512, implicit-def dead $scc
-  ; CHECK-NEXT:   frame-destroy CFI_INSTRUCTION def_cfa_register $sgpr32_lo16
+  ; CHECK-NEXT:   frame-destroy CFI_INSTRUCTION def_cfa_register $sgpr32
   ; CHECK-NEXT:   $sgpr33 = S_MOV_B32 killed $sgpr4
   ; CHECK-NEXT:   S_WAITCNT 16240
   ; CHECK-NEXT:   S_SETPC_B64_return undef $sgpr30_sgpr31, implicit undef $vgpr0
