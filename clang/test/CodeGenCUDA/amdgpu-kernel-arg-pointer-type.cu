@@ -34,7 +34,7 @@
 // CHECK-NEXT:    ret void
 //
 // CHECK-SPIRV-LABEL: define spir_kernel void @_Z7kernel1Pi(
-// CHECK-SPIRV-SAME: ptr addrspace(1) noundef [[X_COERCE:%.*]]) addrspace(4) #[[ATTR0:[0-9]+]] {
+// CHECK-SPIRV-SAME: ptr addrspace(1) noundef [[X_COERCE:%.*]]) addrspace(4) #[[ATTR0:[0-9]+]] !max_work_group_size [[META5:![0-9]+]] {
 // CHECK-SPIRV-NEXT:  [[ENTRY:.*:]]
 // CHECK-SPIRV-NEXT:    [[X:%.*]] = alloca ptr addrspace(4), align 8
 // CHECK-SPIRV-NEXT:    [[X_ADDR:%.*]] = alloca ptr addrspace(4), align 8
@@ -60,7 +60,7 @@
 // OPT-NEXT:    ret void
 //
 // OPT-SPIRV-LABEL: define spir_kernel void @_Z7kernel1Pi(
-// OPT-SPIRV-SAME: ptr addrspace(1) nocapture noundef [[X_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR0:[0-9]+]] {
+// OPT-SPIRV-SAME: ptr addrspace(1) nocapture noundef [[X_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR0:[0-9]+]] !max_work_group_size [[META5:![0-9]+]] {
 // OPT-SPIRV-NEXT:  [[ENTRY:.*:]]
 // OPT-SPIRV-NEXT:    [[TMP0:%.*]] = addrspacecast ptr addrspace(1) [[X_COERCE]] to ptr addrspace(4)
 // OPT-SPIRV-NEXT:    [[TMP1:%.*]] = load i32, ptr addrspace(4) [[TMP0]], align 4
@@ -104,7 +104,7 @@ __global__ void kernel1(int *x) {
 // CHECK-NEXT:    ret void
 //
 // CHECK-SPIRV-LABEL: define spir_kernel void @_Z7kernel2Ri(
-// CHECK-SPIRV-SAME: ptr addrspace(1) noundef align 4 dereferenceable(4) [[X_COERCE:%.*]]) addrspace(4) #[[ATTR0]] {
+// CHECK-SPIRV-SAME: ptr addrspace(1) noundef align 4 dereferenceable(4) [[X_COERCE:%.*]]) addrspace(4) #[[ATTR0]] !max_work_group_size [[META5]] {
 // CHECK-SPIRV-NEXT:  [[ENTRY:.*:]]
 // CHECK-SPIRV-NEXT:    [[X:%.*]] = alloca ptr addrspace(4), align 8
 // CHECK-SPIRV-NEXT:    [[X_ADDR:%.*]] = alloca ptr addrspace(4), align 8
@@ -129,7 +129,7 @@ __global__ void kernel1(int *x) {
 // OPT-NEXT:    ret void
 //
 // OPT-SPIRV-LABEL: define spir_kernel void @_Z7kernel2Ri(
-// OPT-SPIRV-SAME: ptr addrspace(1) nocapture noundef align 4 dereferenceable(4) [[X_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR0]] {
+// OPT-SPIRV-SAME: ptr addrspace(1) nocapture noundef align 4 dereferenceable(4) [[X_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR0]] !max_work_group_size [[META5]] {
 // OPT-SPIRV-NEXT:  [[ENTRY:.*:]]
 // OPT-SPIRV-NEXT:    [[TMP0:%.*]] = addrspacecast ptr addrspace(1) [[X_COERCE]] to ptr addrspace(4)
 // OPT-SPIRV-NEXT:    [[TMP1:%.*]] = load i32, ptr addrspace(4) [[TMP0]], align 4
@@ -173,7 +173,7 @@ __global__ void kernel2(int &x) {
 // CHECK-NEXT:    ret void
 //
 // CHECK-SPIRV-LABEL: define spir_kernel void @_Z7kernel3PU3AS2iPU3AS1i(
-// CHECK-SPIRV-SAME: ptr addrspace(2) noundef [[X:%.*]], ptr addrspace(1) noundef [[Y:%.*]]) addrspace(4) #[[ATTR0]] {
+// CHECK-SPIRV-SAME: ptr addrspace(2) noundef [[X:%.*]], ptr addrspace(1) noundef [[Y:%.*]]) addrspace(4) #[[ATTR0]] !max_work_group_size [[META5]] {
 // CHECK-SPIRV-NEXT:  [[ENTRY:.*:]]
 // CHECK-SPIRV-NEXT:    [[X_ADDR:%.*]] = alloca ptr addrspace(2), align 8
 // CHECK-SPIRV-NEXT:    [[Y_ADDR:%.*]] = alloca ptr addrspace(1), align 8
@@ -197,7 +197,7 @@ __global__ void kernel2(int &x) {
 // OPT-NEXT:    ret void
 //
 // OPT-SPIRV-LABEL: define spir_kernel void @_Z7kernel3PU3AS2iPU3AS1i(
-// OPT-SPIRV-SAME: ptr addrspace(2) nocapture noundef readonly [[X:%.*]], ptr addrspace(1) nocapture noundef writeonly [[Y:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR0]] {
+// OPT-SPIRV-SAME: ptr addrspace(2) nocapture noundef readonly [[X:%.*]], ptr addrspace(1) nocapture noundef writeonly [[Y:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR0]] !max_work_group_size [[META5]] {
 // OPT-SPIRV-NEXT:  [[ENTRY:.*:]]
 // OPT-SPIRV-NEXT:    [[TMP0:%.*]] = load i32, ptr addrspace(2) [[X]], align 4
 // OPT-SPIRV-NEXT:    store i32 [[TMP0]], ptr addrspace(1) [[Y]], align 4
@@ -305,7 +305,7 @@ struct S {
 // CHECK-NEXT:    ret void
 //
 // CHECK-SPIRV-LABEL: define spir_kernel void @_Z7kernel41S(
-// CHECK-SPIRV-SAME: [[STRUCT_S:%.*]] [[S_COERCE:%.*]]) addrspace(4) #[[ATTR0]] {
+// CHECK-SPIRV-SAME: [[STRUCT_S:%.*]] [[S_COERCE:%.*]]) addrspace(4) #[[ATTR0]] !max_work_group_size [[META5]] {
 // CHECK-SPIRV-NEXT:  [[ENTRY:.*:]]
 // CHECK-SPIRV-NEXT:    [[S:%.*]] = alloca [[STRUCT_S]], align 8
 // CHECK-SPIRV-NEXT:    [[S1:%.*]] = addrspacecast ptr [[S]] to ptr addrspace(4)
@@ -341,7 +341,7 @@ struct S {
 // OPT-NEXT:    ret void
 //
 // OPT-SPIRV-LABEL: define spir_kernel void @_Z7kernel41S(
-// OPT-SPIRV-SAME: [[STRUCT_S:%.*]] [[S_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR2:[0-9]+]] {
+// OPT-SPIRV-SAME: [[STRUCT_S:%.*]] [[S_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR2:[0-9]+]] !max_work_group_size [[META5]] {
 // OPT-SPIRV-NEXT:  [[ENTRY:.*:]]
 // OPT-SPIRV-NEXT:    [[S_COERCE_FCA_0_EXTRACT:%.*]] = extractvalue [[STRUCT_S]] [[S_COERCE]], 0
 // OPT-SPIRV-NEXT:    [[S_COERCE_FCA_1_EXTRACT:%.*]] = extractvalue [[STRUCT_S]] [[S_COERCE]], 1
@@ -405,7 +405,7 @@ __global__ void kernel4(struct S s) {
 // CHECK-NEXT:    ret void
 //
 // CHECK-SPIRV-LABEL: define spir_kernel void @_Z7kernel5P1S(
-// CHECK-SPIRV-SAME: ptr addrspace(1) noundef [[S_COERCE:%.*]]) addrspace(4) #[[ATTR0]] {
+// CHECK-SPIRV-SAME: ptr addrspace(1) noundef [[S_COERCE:%.*]]) addrspace(4) #[[ATTR0]] !max_work_group_size [[META5]] {
 // CHECK-SPIRV-NEXT:  [[ENTRY:.*:]]
 // CHECK-SPIRV-NEXT:    [[S:%.*]] = alloca ptr addrspace(4), align 8
 // CHECK-SPIRV-NEXT:    [[S_ADDR:%.*]] = alloca ptr addrspace(4), align 8
@@ -447,7 +447,7 @@ __global__ void kernel4(struct S s) {
 // OPT-NEXT:    ret void
 //
 // OPT-SPIRV-LABEL: define spir_kernel void @_Z7kernel5P1S(
-// OPT-SPIRV-SAME: ptr addrspace(1) nocapture noundef readonly [[S_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR2]] {
+// OPT-SPIRV-SAME: ptr addrspace(1) nocapture noundef readonly [[S_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR2]] !max_work_group_size [[META5]] {
 // OPT-SPIRV-NEXT:  [[ENTRY:.*:]]
 // OPT-SPIRV-NEXT:    [[TMP0:%.*]] = addrspacecast ptr addrspace(1) [[S_COERCE]] to ptr addrspace(4)
 // OPT-SPIRV-NEXT:    [[TMP1:%.*]] = load ptr addrspace(4), ptr addrspace(4) [[TMP0]], align 8
@@ -511,7 +511,7 @@ struct T {
 // CHECK-NEXT:    ret void
 //
 // CHECK-SPIRV-LABEL: define spir_kernel void @_Z7kernel61T(
-// CHECK-SPIRV-SAME: [[STRUCT_T:%.*]] [[T_COERCE:%.*]]) addrspace(4) #[[ATTR0]] {
+// CHECK-SPIRV-SAME: [[STRUCT_T:%.*]] [[T_COERCE:%.*]]) addrspace(4) #[[ATTR0]] !max_work_group_size [[META5]] {
 // CHECK-SPIRV-NEXT:  [[ENTRY:.*:]]
 // CHECK-SPIRV-NEXT:    [[T:%.*]] = alloca [[STRUCT_T]], align 8
 // CHECK-SPIRV-NEXT:    [[T1:%.*]] = addrspacecast ptr [[T]] to ptr addrspace(4)
@@ -549,7 +549,7 @@ struct T {
 // OPT-NEXT:    ret void
 //
 // OPT-SPIRV-LABEL: define spir_kernel void @_Z7kernel61T(
-// OPT-SPIRV-SAME: [[STRUCT_T:%.*]] [[T_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR2]] {
+// OPT-SPIRV-SAME: [[STRUCT_T:%.*]] [[T_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR2]] !max_work_group_size [[META5]] {
 // OPT-SPIRV-NEXT:  [[ENTRY:.*:]]
 // OPT-SPIRV-NEXT:    [[T_COERCE_FCA_0_0_EXTRACT:%.*]] = extractvalue [[STRUCT_T]] [[T_COERCE]], 0, 0
 // OPT-SPIRV-NEXT:    [[T_COERCE_FCA_0_1_EXTRACT:%.*]] = extractvalue [[STRUCT_T]] [[T_COERCE]], 0, 1
@@ -604,7 +604,7 @@ __global__ void kernel6(struct T t) {
 // CHECK-NEXT:    ret void
 //
 // CHECK-SPIRV-LABEL: define spir_kernel void @_Z7kernel7Pi(
-// CHECK-SPIRV-SAME: ptr addrspace(1) noalias noundef [[X_COERCE:%.*]]) addrspace(4) #[[ATTR0]] {
+// CHECK-SPIRV-SAME: ptr addrspace(1) noalias noundef [[X_COERCE:%.*]]) addrspace(4) #[[ATTR0]] !max_work_group_size [[META5]] {
 // CHECK-SPIRV-NEXT:  [[ENTRY:.*:]]
 // CHECK-SPIRV-NEXT:    [[X:%.*]] = alloca ptr addrspace(4), align 8
 // CHECK-SPIRV-NEXT:    [[X_ADDR:%.*]] = alloca ptr addrspace(4), align 8
@@ -630,7 +630,7 @@ __global__ void kernel6(struct T t) {
 // OPT-NEXT:    ret void
 //
 // OPT-SPIRV-LABEL: define spir_kernel void @_Z7kernel7Pi(
-// OPT-SPIRV-SAME: ptr addrspace(1) noalias nocapture noundef [[X_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR0]] {
+// OPT-SPIRV-SAME: ptr addrspace(1) noalias nocapture noundef [[X_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR0]] !max_work_group_size [[META5]] {
 // OPT-SPIRV-NEXT:  [[ENTRY:.*:]]
 // OPT-SPIRV-NEXT:    [[TMP0:%.*]] = addrspacecast ptr addrspace(1) [[X_COERCE]] to ptr addrspace(4)
 // OPT-SPIRV-NEXT:    [[TMP1:%.*]] = load i32, ptr addrspace(4) [[TMP0]], align 4
@@ -676,7 +676,7 @@ struct SS {
 // CHECK-NEXT:    ret void
 //
 // CHECK-SPIRV-LABEL: define spir_kernel void @_Z7kernel82SS(
-// CHECK-SPIRV-SAME: [[STRUCT_SS:%.*]] [[A_COERCE:%.*]]) addrspace(4) #[[ATTR0]] {
+// CHECK-SPIRV-SAME: [[STRUCT_SS:%.*]] [[A_COERCE:%.*]]) addrspace(4) #[[ATTR0]] !max_work_group_size [[META5]] {
 // CHECK-SPIRV-NEXT:  [[ENTRY:.*:]]
 // CHECK-SPIRV-NEXT:    [[A:%.*]] = alloca [[STRUCT_SS]], align 8
 // CHECK-SPIRV-NEXT:    [[A1:%.*]] = addrspacecast ptr [[A]] to ptr addrspace(4)
@@ -697,7 +697,7 @@ struct SS {
 // OPT-NEXT:    ret void
 //
 // OPT-SPIRV-LABEL: define spir_kernel void @_Z7kernel82SS(
-// OPT-SPIRV-SAME: [[STRUCT_SS:%.*]] [[A_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR2]] {
+// OPT-SPIRV-SAME: [[STRUCT_SS:%.*]] [[A_COERCE:%.*]]) local_unnamed_addr addrspace(4) #[[ATTR2]] !max_work_group_size [[META5]] {
 // OPT-SPIRV-NEXT:  [[ENTRY:.*:]]
 // OPT-SPIRV-NEXT:    [[A_COERCE_FCA_0_EXTRACT:%.*]] = extractvalue [[STRUCT_SS]] [[A_COERCE]], 0
 // OPT-SPIRV-NEXT:    [[TMP0:%.*]] = load float, ptr addrspace(4) [[A_COERCE_FCA_0_EXTRACT]], align 4
@@ -724,5 +724,9 @@ __global__ void kernel8(struct SS a) {
   *a.x += 3.f;
 }
 //.
+// CHECK-SPIRV: [[META5]] = !{i32 1024, i32 1, i32 1}
+//.
 // OPT: [[META4]] = !{}
+//.
+// OPT-SPIRV: [[META5]] = !{i32 1024, i32 1, i32 1}
 //.
