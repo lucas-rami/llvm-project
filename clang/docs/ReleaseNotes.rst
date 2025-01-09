@@ -1257,6 +1257,7 @@ RISC-V Support
 
 CUDA/HIP Language Changes
 ^^^^^^^^^^^^^^^^^^^^^^^^^
+- Fixed a bug about overriding a constexpr pure-virtual member function with a non-constexpr virtual member function which causes compilation failure when including standard C++ header `format`.
 
 - [HIP Only] add experimental support for offloading select C++ Algorithms,
   which can be toggled via the ``--hipstdpar`` flag. This is available only for
