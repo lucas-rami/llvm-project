@@ -2030,11 +2030,6 @@ void *GenericPluginTy::data_alloc(int32_t DeviceId, int64_t Size, void *HostPtr,
     }
     assert(*AllocOrErr && "Null pointer upon successful allocation");
 
-    // Method has no effect when the CUDA Plugin is used.
-    // This method can only be called if HostPtr is not null.
-    if (HostPtr && Kind == TARGET_ALLOC_SHARED)
-      set_coarse_grain_mem_region(DeviceId, HostPtr, Size);
-
     return *AllocOrErr;
   }();
   T.res(R);
