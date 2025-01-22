@@ -597,7 +597,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
 
     // F16 - VOP1 Actions.
     setOperationAction({ISD::FP_ROUND, ISD::STRICT_FP_ROUND, ISD::FCOS,
-                        ISD::FSIN, ISD::FROUND, ISD::FPTRUNC_ROUND},
+                        ISD::FSIN, ISD::FROUND},
                        MVT::f16, Custom);
 
     setOperationAction({ISD::FP_TO_SINT, ISD::FP_TO_UINT}, MVT::f16, Promote);
@@ -855,6 +855,13 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
     setOperationAction({ISD::FMINIMUM, ISD::FMAXIMUM},
                        {MVT::v4f16, MVT::v8f16, MVT::v16f16, MVT::v32f16},
                        Custom);
+  } else {
+    // FIXME: For nnan fmaximum, emit the fmaximum3 instead of fmaxnum
+    if (Subtarget->hasMinimum3Maximum3F32())
+      setOperationAction({ISD::FMAXIMUM, ISD::FMINIMUM}, MVT::f32, Legal);
+
+    if (Subtarget->hasMinimum3Maximum3PKF16())
+      setOperationAction({ISD::FMAXIMUM, ISD::FMINIMUM}, MVT::v2f16, Legal);
   }
 
   setOperationAction(ISD::INTRINSIC_WO_CHAIN,
@@ -888,6 +895,16 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::GET_FPMODE, MVT::i32, Legal);
 
   setOperationAction(ISD::MUL, MVT::i1, Promote);
+
+  if (Subtarget->hasBF16ConversionInsts()) {
+    setOperationAction(ISD::FP_ROUND, MVT::v2bf16, Legal);
+    setOperationAction(ISD::FP_ROUND, MVT::bf16, Legal);
+    setOperationAction(ISD::BUILD_VECTOR, MVT::v2bf16, Legal);
+  }
+
+  if (Subtarget->hasCvtPkF16F32Inst()) {
+    setOperationAction(ISD::FP_ROUND, MVT::v2f16, Legal);
+  }
 
   setTargetDAGCombine({ISD::ADD,
                        ISD::UADDO_CARRY,
@@ -1386,7 +1403,11 @@ bool SITargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     return true;
   }
   case Intrinsic::amdgcn_global_load_tr_b64:
-  case Intrinsic::amdgcn_global_load_tr_b128: {
+  case Intrinsic::amdgcn_global_load_tr_b128:
+  case Intrinsic::amdgcn_ds_read_tr4_b64:
+  case Intrinsic::amdgcn_ds_read_tr6_b96:
+  case Intrinsic::amdgcn_ds_read_tr8_b64:
+  case Intrinsic::amdgcn_ds_read_tr16_b64: {
     Info.opc = ISD::INTRINSIC_W_CHAIN;
     Info.memVT = MVT::getVT(CI.getType());
     Info.ptrVal = CI.getOperand(0);
@@ -1474,6 +1495,10 @@ bool SITargetLowering::getAddrModeArguments(IntrinsicInst *II,
   case Intrinsic::amdgcn_atomic_cond_sub_u32:
   case Intrinsic::amdgcn_ds_append:
   case Intrinsic::amdgcn_ds_consume:
+  case Intrinsic::amdgcn_ds_read_tr4_b64:
+  case Intrinsic::amdgcn_ds_read_tr6_b96:
+  case Intrinsic::amdgcn_ds_read_tr8_b64:
+  case Intrinsic::amdgcn_ds_read_tr16_b64:
   case Intrinsic::amdgcn_ds_ordered_add:
   case Intrinsic::amdgcn_ds_ordered_swap:
   case Intrinsic::amdgcn_flat_atomic_fadd:
@@ -5804,24 +5829,6 @@ SDValue SITargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::FP_ROUND:
   case ISD::STRICT_FP_ROUND:
     return lowerFP_ROUND(Op, DAG);
-  case ISD::FPTRUNC_ROUND: {
-    unsigned Opc;
-    SDLoc DL(Op);
-
-    if (Op.getOperand(0)->getValueType(0) != MVT::f32)
-      return SDValue();
-
-    // Get the rounding mode from the last operand
-    int RoundMode = Op.getConstantOperandVal(1);
-    if (RoundMode == (int)RoundingMode::TowardPositive)
-      Opc = AMDGPUISD::FPTRUNC_ROUND_UPWARD;
-    else if (RoundMode == (int)RoundingMode::TowardNegative)
-      Opc = AMDGPUISD::FPTRUNC_ROUND_DOWNWARD;
-    else
-      return SDValue();
-
-    return DAG.getNode(Opc, DL, Op.getNode()->getVTList(), Op->getOperand(0));
-  }
   case ISD::TRAP:
     return lowerTRAP(Op, DAG);
   case ISD::DEBUGTRAP:
@@ -9974,6 +9981,22 @@ SDValue SITargetLowering::LowerINTRINSIC_VOID(SDValue Op,
                       : HasVOffset ? AMDGPU::BUFFER_LOAD_DWORD_LDS_OFFEN
                                    : AMDGPU::BUFFER_LOAD_DWORD_LDS_OFFSET;
       break;
+    case 12:
+      if (!Subtarget->hasLDSLoadB96_B128())
+        return SDValue();
+      Opc = HasVIndex ? HasVOffset ? AMDGPU::BUFFER_LOAD_DWORDX3_LDS_BOTHEN
+                                   : AMDGPU::BUFFER_LOAD_DWORDX3_LDS_IDXEN
+                      : HasVOffset ? AMDGPU::BUFFER_LOAD_DWORDX3_LDS_OFFEN
+                                   : AMDGPU::BUFFER_LOAD_DWORDX3_LDS_OFFSET;
+      break;
+    case 16:
+      if (!Subtarget->hasLDSLoadB96_B128())
+        return SDValue();
+      Opc = HasVIndex ? HasVOffset ? AMDGPU::BUFFER_LOAD_DWORDX4_LDS_BOTHEN
+                                   : AMDGPU::BUFFER_LOAD_DWORDX4_LDS_IDXEN
+                      : HasVOffset ? AMDGPU::BUFFER_LOAD_DWORDX4_LDS_OFFEN
+                                   : AMDGPU::BUFFER_LOAD_DWORDX4_LDS_OFFSET;
+      break;
     }
 
     SDValue M0Val = copyToM0(DAG, Chain, DL, Op.getOperand(3));
@@ -10042,6 +10065,16 @@ SDValue SITargetLowering::LowerINTRINSIC_VOID(SDValue Op,
       break;
     case 4:
       Opc = AMDGPU::GLOBAL_LOAD_LDS_DWORD;
+      break;
+    case 12:
+      if (!Subtarget->hasLDSLoadB96_B128())
+        return SDValue();
+      Opc = AMDGPU::GLOBAL_LOAD_LDS_DWORDX3;
+      break;
+    case 16:
+      if (!Subtarget->hasLDSLoadB96_B128())
+        return SDValue();
+      Opc = AMDGPU::GLOBAL_LOAD_LDS_DWORDX4;
       break;
     }
 
@@ -13425,7 +13458,8 @@ static bool supportsMin3Max3(const GCNSubtarget &Subtarget, unsigned Opc,
     return (VT == MVT::f32) || (VT == MVT::f16 && Subtarget.hasMin3Max3_16());
   case ISD::FMINIMUM:
   case ISD::FMAXIMUM:
-    return (VT == MVT::f32 || VT == MVT::f16) && Subtarget.hasIEEEMinMax3();
+    return (VT == MVT::f32 && Subtarget.hasMinimum3Maximum3F32()) ||
+           (VT == MVT::f16 && Subtarget.hasMinimum3Maximum3F16());
   case ISD::SMAX:
   case ISD::SMIN:
   case ISD::UMAX:
@@ -13613,12 +13647,15 @@ bool SITargetLowering::shouldExpandVectorDynExt(unsigned EltSize,
 
   // On some architectures (GFX9) movrel is not available and it's better
   // to expand.
-  if (!Subtarget->hasMovrel())
+  if (Subtarget->useVGPRIndexMode())
     return NumInsts <= 16;
 
   // If movrel is available, use it instead of expanding for vector of 8
   // elements.
-  return NumInsts <= 15;
+  if (Subtarget->hasMovrel())
+    return NumInsts <= 15;
+
+  return true;
 }
 
 bool SITargetLowering::shouldExpandVectorDynExt(SDNode *N) const {
@@ -15519,6 +15556,23 @@ void SITargetLowering::AdjustInstrPostInstrSelection(MachineInstr &MI,
         // v_accvgpr_read, but we do not produce agpr reads during selection,
         // so no use checks are needed.
         MRI.setRegClass(Op.getReg(), NewRC);
+      }
+
+      if (TII->isMAI(MI)) {
+        // The ordinary src0, src1, src2 were legalized above.
+        //
+        // We have to also legalize the appended v_mfma_ld_scale_b32 operands,
+        // as a separate instruction.
+        int Src0Idx = AMDGPU::getNamedOperandIdx(MI.getOpcode(),
+                                                 AMDGPU::OpName::scale_src0);
+        if (Src0Idx != -1) {
+          int Src1Idx = Src0Idx + 2;
+          assert(Src1Idx = AMDGPU::getNamedOperandIdx(
+                     MI.getOpcode(), AMDGPU::OpName::scale_src1));
+          if (TII->usesConstantBus(MRI, MI, Src0Idx) &&
+              TII->usesConstantBus(MRI, MI, Src1Idx))
+            TII->legalizeOpWithMove(MI, Src1Idx);
+        }
       }
 
       if (!HasAGPRs)

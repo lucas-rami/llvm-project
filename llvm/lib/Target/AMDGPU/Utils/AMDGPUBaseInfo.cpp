@@ -385,6 +385,14 @@ struct SingleUseExceptionInfo {
   bool IsInvalidSingleUseProducer;
 };
 
+#define GET_FP8DstByteSelTable_DECL
+#define GET_FP8DstByteSelTable_IMPL
+
+struct DPMACCInstructionInfo {
+  uint16_t Opcode;
+  bool IsDPMACCInstruction;
+};
+
 struct FP8DstByteSelInfo {
   uint16_t Opcode;
   bool HasFP8DstByteSel;
@@ -424,6 +432,11 @@ struct FP8DstByteSelInfo {
 #define GET_WMMAOpcode2AddrMappingTable_IMPL
 #define GET_WMMAOpcode3AddrMappingTable_DECL
 #define GET_WMMAOpcode3AddrMappingTable_IMPL
+#define GET_getMFMA_F8F6F4_WithSize_DECL
+#define GET_getMFMA_F8F6F4_WithSize_IMPL
+#define GET_isMFMA_F8F6F4Table_IMPL
+#define GET_isCvtScaleF32_F32F16ToF8F4Table_IMPL
+
 #include "AMDGPUGenSearchableTables.inc"
 
 int getMTBUFBaseOpcode(unsigned Opc) {
@@ -532,6 +545,30 @@ bool getMAIIsGFX940XDL(unsigned Opc) {
   return Info ? Info->is_gfx940_xdl : false;
 }
 
+uint8_t mfmaScaleF8F6F4FormatToNumRegs(unsigned EncodingVal) {
+  switch (EncodingVal) {
+  case MFMAScaleFormats::FP6_E2M3:
+  case MFMAScaleFormats::FP6_E3M2:
+    return 6;
+  case MFMAScaleFormats::FP4_E2M1:
+    return 4;
+  case MFMAScaleFormats::FP8_E4M3:
+  case MFMAScaleFormats::FP8_E5M2:
+  default:
+    return 8;
+  }
+
+  llvm_unreachable("covered switch over mfma scale formats");
+}
+
+const MFMA_F8F6F4_Info *getMFMA_F8F6F4_WithFormatArgs(unsigned CBSZ,
+                                                      unsigned BLGP,
+                                                      unsigned F8F8Opcode) {
+  uint8_t SrcANumRegs = mfmaScaleF8F6F4FormatToNumRegs(CBSZ);
+  uint8_t SrcBNumRegs = mfmaScaleF8F6F4FormatToNumRegs(BLGP);
+  return getMFMA_F8F6F4_InstWithNumRegs(SrcANumRegs, SrcBNumRegs, F8F8Opcode);
+}
+
 unsigned getVOPDEncodingFamily(const MCSubtargetInfo &ST) {
   if (ST.hasFeature(AMDGPU::FeatureGFX12Insts))
     return SIEncodingFamily::GFX12;
@@ -574,6 +611,7 @@ bool isMAC(unsigned Opc) {
          Opc == AMDGPU::V_FMAC_F16_t16_e64_gfx11 ||
          Opc == AMDGPU::V_FMAC_F16_t16_e64_gfx12 ||
          Opc == AMDGPU::V_DOT2C_F32_F16_e64_vi ||
+         Opc == AMDGPU::V_DOT2C_F32_BF16_e64_vi ||
          Opc == AMDGPU::V_DOT2C_I32_I16_e64_vi ||
          Opc == AMDGPU::V_DOT4C_I32_I8_e64_vi ||
          Opc == AMDGPU::V_DOT8C_I32_I4_e64_vi;
@@ -918,11 +956,7 @@ unsigned getWavefrontSize(const MCSubtargetInfo *STI) {
 }
 
 unsigned getLocalMemorySize(const MCSubtargetInfo *STI) {
-  unsigned BytesPerCU = 0;
-  if (STI->getFeatureBits().test(FeatureLocalMemorySize32768))
-    BytesPerCU = 32768;
-  if (STI->getFeatureBits().test(FeatureLocalMemorySize65536))
-    BytesPerCU = 65536;
+  unsigned BytesPerCU = getAddressableLocalMemorySize(STI);
 
   // "Per CU" really means "per whatever functional block the waves of a
   // workgroup must share". So the effective local memory size is doubled in
@@ -934,10 +968,12 @@ unsigned getLocalMemorySize(const MCSubtargetInfo *STI) {
 }
 
 unsigned getAddressableLocalMemorySize(const MCSubtargetInfo *STI) {
-  if (STI->getFeatureBits().test(FeatureLocalMemorySize32768))
+  if (STI->getFeatureBits().test(FeatureAddressableLocalMemorySize32768))
     return 32768;
-  if (STI->getFeatureBits().test(FeatureLocalMemorySize65536))
+  if (STI->getFeatureBits().test(FeatureAddressableLocalMemorySize65536))
     return 65536;
+  if (STI->getFeatureBits().test(FeatureAddressableLocalMemorySize163840))
+    return 163840;
   return 0;
 }
 
@@ -2933,6 +2969,7 @@ const AlwaysUniform *lookupAlwaysUniform(unsigned Intr);
 #define GET_Gfx9BufferFormat_IMPL
 #define GET_Gfx10BufferFormat_IMPL
 #define GET_Gfx11PlusBufferFormat_IMPL
+
 #include "AMDGPUGenSearchableTables.inc"
 
 } // end anonymous namespace

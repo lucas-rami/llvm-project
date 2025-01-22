@@ -280,6 +280,7 @@ DECODE_OPERAND_REG_8(VGPR_32_Lo128)
 DECODE_OPERAND_REG_8(VReg_64)
 DECODE_OPERAND_REG_8(VReg_96)
 DECODE_OPERAND_REG_8(VReg_128)
+DECODE_OPERAND_REG_8(VReg_192)
 DECODE_OPERAND_REG_8(VReg_256)
 DECODE_OPERAND_REG_8(VReg_288)
 DECODE_OPERAND_REG_8(VReg_352)
@@ -477,6 +478,17 @@ static inline DecoderUInt128 eat12Bytes(ArrayRef<uint8_t> &Bytes) {
   return DecoderUInt128(Lo, Hi);
 }
 
+static inline DecoderUInt128 eat16Bytes(ArrayRef<uint8_t> &Bytes) {
+  assert(Bytes.size() >= 16);
+  uint64_t Lo =
+      support::endian::read<uint64_t, llvm::endianness::little>(Bytes.data());
+  Bytes = Bytes.slice(8);
+  uint64_t Hi =
+      support::endian::read<uint64_t, llvm::endianness::little>(Bytes.data());
+  Bytes = Bytes.slice(8);
+  return DecoderUInt128(Lo, Hi);
+}
+
 DecodeStatus AMDGPUDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
                                                 ArrayRef<uint8_t> Bytes_,
                                                 uint64_t Address,
@@ -513,6 +525,15 @@ DecodeStatus AMDGPUDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
 
       // Reinitialize Bytes
       Bytes = Bytes_.slice(0, MaxInstBytesNum);
+
+    } else if (Bytes.size() >= 16 &&
+               STI.hasFeature(AMDGPU::FeatureGFX950Insts)) {
+      DecoderUInt128 DecW = eat16Bytes(Bytes);
+      if (tryDecodeInst(DecoderTableGFX940128, MI, DecW, Address, CS))
+        break;
+
+      // Reinitialize Bytes
+      Bytes = Bytes_.slice(0, MaxInstBytesNum);
     }
 
     if (Bytes.size() >= 8) {
@@ -524,6 +545,10 @@ DecodeStatus AMDGPUDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
 
       if (STI.hasFeature(AMDGPU::FeatureUnpackedD16VMem) &&
           tryDecodeInst(DecoderTableGFX80_UNPACKED64, MI, QW, Address, CS))
+        break;
+
+      if (STI.hasFeature(AMDGPU::FeatureGFX950Insts) &&
+          tryDecodeInst(DecoderTableGFX95064, MI, QW, Address, CS))
         break;
 
       // Some GFX9 subtargets repurposed the v_mad_mix_f32, v_mad_mixlo_f16 and
@@ -585,6 +610,10 @@ DecodeStatus AMDGPUDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
         break;
 
       if (isGFX9() && tryDecodeInst(DecoderTableGFX932, MI, DW, Address, CS))
+        break;
+
+      if (STI.hasFeature(AMDGPU::FeatureGFX950Insts) &&
+          tryDecodeInst(DecoderTableGFX95032, MI, DW, Address, CS))
         break;
 
       if (STI.hasFeature(AMDGPU::FeatureGFX90AInsts) &&
@@ -722,6 +751,9 @@ DecodeStatus AMDGPUDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
   if (MCII->get(MI.getOpcode()).TSFlags & SIInstrFlags::SDWA)
     convertSDWAInst(MI);
 
+  if (MCII->get(MI.getOpcode()).TSFlags & SIInstrFlags::IsMAI)
+    convertMAIInst(MI);
+
   int VDstIn_Idx = AMDGPU::getNamedOperandIdx(MI.getOpcode(),
                                               AMDGPU::OpName::vdst_in);
   if (VDstIn_Idx != -1) {
@@ -789,6 +821,58 @@ void AMDGPUDisassembler::convertSDWAInst(MCInst &MI) const {
       insertNamedMCOperand(MI, MCOperand::createImm(0), AMDGPU::OpName::omod);
     }
   }
+}
+
+/// Adjust the register values used by V_MFMA_F8F6F4_f8_f8 instructions to the
+/// appropriate subregister for the used format width.
+static void adjustMFMA_F8F6F4OpRegClass(const MCRegisterInfo &MRI,
+                                        MCOperand &MO, uint8_t NumRegs) {
+  switch (NumRegs) {
+  case 4:
+    return MO.setReg(MRI.getSubReg(MO.getReg(), AMDGPU::sub0_sub1_sub2_sub3));
+  case 6:
+    return MO.setReg(
+        MRI.getSubReg(MO.getReg(), AMDGPU::sub0_sub1_sub2_sub3_sub4_sub5));
+  case 8:
+    // No-op in cases where one operand is still f8/bf8.
+    return;
+  default:
+    llvm_unreachable("Unexpected size for mfma f8f6f4 operand");
+  }
+}
+
+/// f8f6f4 instructions have different pseudos depending on the used formats. In
+/// the disassembler table, we only have the variants with the largest register
+/// classes which assume using an fp8/bf8 format for both operands. The actual
+/// register class depends on the format in blgp and cbsz operands. Adjust the
+/// register classes depending on the used format.
+void AMDGPUDisassembler::convertMAIInst(MCInst &MI) const {
+  int BlgpIdx =
+      AMDGPU::getNamedOperandIdx(MI.getOpcode(), AMDGPU::OpName::blgp);
+  if (BlgpIdx == -1)
+    return;
+
+  int CbszIdx =
+      AMDGPU::getNamedOperandIdx(MI.getOpcode(), AMDGPU::OpName::cbsz);
+
+  unsigned CBSZ = MI.getOperand(CbszIdx).getImm();
+  unsigned BLGP = MI.getOperand(BlgpIdx).getImm();
+
+  const AMDGPU::MFMA_F8F6F4_Info *AdjustedRegClassOpcode =
+      AMDGPU::getMFMA_F8F6F4_WithFormatArgs(CBSZ, BLGP, MI.getOpcode());
+  if (!AdjustedRegClassOpcode ||
+      AdjustedRegClassOpcode->Opcode == MI.getOpcode())
+    return;
+
+  MI.setOpcode(AdjustedRegClassOpcode->Opcode);
+  int Src0Idx =
+      AMDGPU::getNamedOperandIdx(MI.getOpcode(), AMDGPU::OpName::src0);
+  int Src1Idx =
+      AMDGPU::getNamedOperandIdx(MI.getOpcode(), AMDGPU::OpName::src1);
+  adjustMFMA_F8F6F4OpRegClass(MRI, MI.getOperand(Src0Idx),
+                              AdjustedRegClassOpcode->NumRegsSrcA);
+  adjustMFMA_F8F6F4OpRegClass(MRI, MI.getOperand(Src1Idx),
+                              AdjustedRegClassOpcode->NumRegsSrcB);
 }
 
 struct VOPModifiers {
@@ -1425,6 +1509,7 @@ unsigned AMDGPUDisassembler::getVgprClassId(const OpWidthTy Width) const {
   case OPWV232: return VReg_64RegClassID;
   case OPW96: return VReg_96RegClassID;
   case OPW128: return VReg_128RegClassID;
+  case OPW192: return VReg_192RegClassID;
   case OPW160: return VReg_160RegClassID;
   case OPW256: return VReg_256RegClassID;
   case OPW288: return VReg_288RegClassID;
