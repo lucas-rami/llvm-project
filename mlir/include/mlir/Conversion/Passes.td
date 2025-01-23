@@ -61,7 +61,10 @@ def ConvertToSPIRVPass : Pass<"convert-to-spirv"> {
     "Run vector unrolling to convert vector types in function bodies">,
     Option<"convertGPUModules", "convert-gpu-modules", "bool",
     /*default=*/"false",
-    "Clone and convert GPU modules">
+    "Clone and convert GPU modules">,
+    Option<"nestInGPUModule", "nest-in-gpu-module", "bool",
+    /*default=*/"false",
+    "Put converted SPIR-V module inside the gpu.module instead of alongside it.">,
   ];
 }
 
@@ -460,10 +463,6 @@ def ConvertFuncToLLVMPass : Pass<"convert-func-to-llvm", "ModuleOp"> {
     1 value is returned, packed into an LLVM IR struct type. Function calls and
     returns are updated accordingly. Block argument types are updated to use
     LLVM IR types.
-
-    Note that until https://github.com/llvm/llvm-project/issues/70982 is resolved,
-    this pass includes patterns that lower `arith` and `cf` to LLVM. This is legacy
-    code due to when they were all converted in the same pass.
   }];
   let dependentDialects = ["LLVM::LLVMDialect"];
   let options = [
@@ -518,6 +517,14 @@ def GpuToLLVMConversionPass : Pass<"gpu-to-llvm", "ModuleOp"> {
            /*default=*/"false",
              "Use bare pointers to pass memref arguments to kernels. "
              "The kernel must use the same setting for this option."
+          >,
+    Option<"kernelIntersperseSizeCallConv", "intersperse-sizes-for-kernels", "bool",
+           /*default=*/"false",
+           "Inserts a size_t argument following each memref argument, "
+           "containing the static size in bytes of the buffer. Incompatible "
+           "arguments are rejected. This is intended for use by the Vulkan "
+           "runtime with the kernel bare pointer calling convention, to enable "
+           "dynamic binding of buffers as arguments without static type info."
           >
   ];
 
@@ -551,14 +558,11 @@ def LowerHostCodeToLLVMPass : Pass<"lower-host-to-llvm", "ModuleOp"> {
 def ConvertGpuOpsToLLVMSPVOps : Pass<"convert-gpu-to-llvm-spv", "gpu::GPUModuleOp"> {
   let summary =
     "Generate LLVM operations to be ingested by a SPIR-V backend for gpu operations";
-  let dependentDialects = [
-    "LLVM::LLVMDialect",
-    "spirv::SPIRVDialect",
-  ];
+  let dependentDialects = ["LLVM::LLVMDialect"];
   let options = [
-    Option<"indexBitwidth", "index-bitwidth", "unsigned",
-           /*default=kDeriveIndexBitwidthFromDataLayout*/"0",
-           "Bitwidth of the index type, 0 to use size of machine word">,
+    Option<"use64bitIndex", "use-64bit-index",
+           "bool", /*default=*/"false",
+           "Use 64-bit integers to convert index types">,
   ];
 }
 
@@ -648,31 +652,6 @@ def ConvertGPUToSPIRV : Pass<"convert-gpu-to-spirv", "ModuleOp"> {
            "bool", /*default=*/"false",
            "Use 64-bit integers to convert index types">,
   ];
-}
-
-//===----------------------------------------------------------------------===//
-// GPUToVulkan
-//===----------------------------------------------------------------------===//
-
-def ConvertGpuLaunchFuncToVulkanLaunchFunc
-    : Pass<"convert-gpu-launch-to-vulkan-launch", "ModuleOp"> {
-  let summary = "Convert gpu.launch_func to vulkanLaunch external call";
-  let description = [{
-    This pass is only intended for the mlir-vulkan-runner.
-  }];
-  let constructor = "mlir::createConvertGpuLaunchFuncToVulkanLaunchFuncPass()";
-  let dependentDialects = ["spirv::SPIRVDialect"];
-}
-
-def ConvertVulkanLaunchFuncToVulkanCallsPass
-    : Pass<"launch-func-to-vulkan", "ModuleOp"> {
-  let summary = "Convert vulkanLaunch external call to Vulkan runtime external "
-                "calls";
-  let description = [{
-    This pass is only intended for the mlir-vulkan-runner.
-  }];
-
-  let dependentDialects = ["LLVM::LLVMDialect"];
 }
 
 //===----------------------------------------------------------------------===//
@@ -789,6 +768,28 @@ def ConvertMathToSPIRV : Pass<"convert-math-to-spirv"> {
 }
 
 //===----------------------------------------------------------------------===//
+// MathToEmitC
+//===----------------------------------------------------------------------===//
+
+def ConvertMathToEmitC  : Pass<"convert-math-to-emitc"> {
+  let summary = "Convert some Math operations to EmitC call_opaque operations";
+  let description = [{
+    This pass converts supported Math ops to `call_opaque` ops targeting libc/libm
+    functions. Unlike convert-math-to-funcs pass, converting to `call_opaque` ops
+    allows to overload the same function with different argument types.
+  }];
+  let dependentDialects = ["emitc::EmitCDialect"];
+  let options = [
+    Option<"languageTarget", "language-target", "::mlir::emitc::LanguageTarget",
+      /*default=*/"::mlir::emitc::LanguageTarget::c99", "Select the language standard target for callees (c99 or cpp11).",
+      [{::llvm::cl::values(
+            clEnumValN(::mlir::emitc::LanguageTarget::c99, "c99", "c99"),
+            clEnumValN(::mlir::emitc::LanguageTarget::cpp11, "cpp11", "cpp11")
+          )}]>
+  ];
+}
+
+//===----------------------------------------------------------------------===//
 // MathToFuncs
 //===----------------------------------------------------------------------===//
 
@@ -883,6 +884,29 @@ def ConvertMemRefToSPIRV : Pass<"convert-memref-to-spirv"> {
     Option<"use64bitIndex", "use-64bit-index",
            "bool", /*default=*/"false",
            "Use 64-bit integers to convert index types">
+  ];
+}
+
+//===----------------------------------------------------------------------===//
+// MeshToMPI
+//===----------------------------------------------------------------------===//
+
+def ConvertMeshToMPIPass : Pass<"convert-mesh-to-mpi"> {
+  let summary = "Convert Mesh dialect to MPI dialect.";
+  let constructor = "mlir::createConvertMeshToMPIPass()";
+  let description = [{
+    This pass converts communication operations from the Mesh dialect to the
+    MPI dialect.
+    If it finds a global named "static_mpi_rank" it will use that splat value
+    instead of calling MPI_Comm_rank. This allows optimizations like constant
+    shape propagation and fusion because shard/partition sizes depend on the
+    rank.
+  }];
+  let dependentDialects = [
+    "memref::MemRefDialect",
+    "mpi::MPIDialect",
+    "scf::SCFDialect",
+    "bufferization::BufferizationDialect"
   ];
 }
 
@@ -1415,7 +1439,11 @@ def ConvertVectorToLLVMPass : Pass<"convert-vector-to-llvm"> {
     Option<"x86Vector", "enable-x86vector",
            "bool", /*default=*/"false",
            "Enables the use of X86Vector dialect while lowering the vector "
-	   "dialect.">
+	   "dialect.">,
+    Option<"vectorTransformsOptions", "vector-transform-options",
+           "vector::VectorTransformsOptions",
+           /*default=*/"vector::VectorTransformsOptions()",
+           "Options to lower some operations like contractions and transposes.">,
   ];
 }
 

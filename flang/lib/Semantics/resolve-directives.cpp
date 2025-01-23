@@ -502,19 +502,8 @@ public:
     return false;
   }
   bool Pre(const parser::OmpLinearClause &x) {
-    common::visit(common::visitors{
-                      [&](const parser::OmpLinearClause::WithoutModifier
-                              &linearWithoutModifier) {
-                        ResolveOmpNameList(linearWithoutModifier.names,
-                            Symbol::Flag::OmpLinear);
-                      },
-                      [&](const parser::OmpLinearClause::WithModifier
-                              &linearWithModifier) {
-                        ResolveOmpNameList(
-                            linearWithModifier.names, Symbol::Flag::OmpLinear);
-                      },
-                  },
-        x.u);
+    auto &objects{std::get<parser::OmpObjectList>(x.t)};
+    ResolveOmpObjectList(objects, Symbol::Flag::OmpLinear);
     return false;
   }
 
@@ -1788,7 +1777,6 @@ void OmpAttributeVisitor::ResolveSeqLoopIndexInParallelOrTaskConstruct(
 // Use of DO CONCURRENT inside OpenMP construct is unspecified behavior
 // till OpenMP-5.0 standard.
 // In above both cases we skip the privatization of iteration variables.
-// [OpenMP 5.1] DO CONCURRENT indices are private
 bool OmpAttributeVisitor::Pre(const parser::DoConstruct &x) {
   if (!dirContext_.empty() && GetContext().withinConstruct) {
     llvm::SmallVector<const parser::Name *> ivs;
@@ -1796,20 +1784,6 @@ bool OmpAttributeVisitor::Pre(const parser::DoConstruct &x) {
       const parser::Name *iv{GetLoopIndex(x)};
       if (iv && iv->symbol)
         ivs.push_back(iv);
-    } else if (x.IsDoConcurrent()) {
-      const Fortran::parser::LoopControl *loopControl = &*x.GetLoopControl();
-      const Fortran::parser::LoopControl::Concurrent &concurrent =
-          std::get<Fortran::parser::LoopControl::Concurrent>(loopControl->u);
-      const Fortran::parser::ConcurrentHeader &concurrentHeader =
-          std::get<Fortran::parser::ConcurrentHeader>(concurrent.t);
-      const std::list<Fortran::parser::ConcurrentControl> &controls =
-          std::get<std::list<Fortran::parser::ConcurrentControl>>(
-              concurrentHeader.t);
-      for (const auto &control : controls) {
-        const parser::Name *iv{&std::get<0>(control.t)};
-        if (iv && iv->symbol)
-          ivs.push_back(iv);
-      }
     }
     ordCollapseLevel--;
     for (auto iv : ivs) {
@@ -1821,9 +1795,6 @@ bool OmpAttributeVisitor::Pre(const parser::DoConstruct &x) {
       if (ordCollapseLevel) {
         if (const auto *details{iv->symbol->detailsIf<HostAssocDetails>()}) {
           const Symbol *tpSymbol = &details->symbol();
-          // TODO: DoConcurrent won't capture the following check because a new
-          // symbol is declared in ResolveIndexName(), which will not have the
-          // OmpThreadprivate flag.
           if (tpSymbol->test(Symbol::Flag::OmpThreadprivate)) {
             context_.Say(iv->source,
                 "Loop iteration variable %s is not allowed in THREADPRIVATE."_err_en_US,
@@ -1895,22 +1866,29 @@ void OmpAttributeVisitor::PrivatizeAssociatedLoopIndexAndCheckLoopLevel(
   }
 
   const auto &outer{std::get<std::optional<parser::DoConstruct>>(x.t)};
-  for (const parser::DoConstruct *loop{&*outer}; loop && level > 0; --level) {
-    // go through all the nested do-loops and resolve index variables
-    const parser::Name *iv{GetLoopIndex(*loop)};
-    if (iv) {
-      if (auto *symbol{ResolveOmp(*iv, ivDSA, currScope())}) {
-        symbol->set(Symbol::Flag::OmpPreDetermined);
-        iv->symbol = symbol; // adjust the symbol within region
-        AddToContextObjectWithDSA(*symbol, ivDSA);
-      }
+  if (outer.has_value()) {
+    for (const parser::DoConstruct *loop{&*outer}; loop && level > 0; --level) {
+      // go through all the nested do-loops and resolve index variables
+      const parser::Name *iv{GetLoopIndex(*loop)};
+      if (iv) {
+        if (auto *symbol{ResolveOmp(*iv, ivDSA, currScope())}) {
+          symbol->set(Symbol::Flag::OmpPreDetermined);
+          iv->symbol = symbol; // adjust the symbol within region
+          AddToContextObjectWithDSA(*symbol, ivDSA);
+        }
 
-      const auto &block{std::get<parser::Block>(loop->t)};
-      const auto it{block.begin()};
-      loop = it != block.end() ? GetDoConstructIf(*it) : nullptr;
+        const auto &block{std::get<parser::Block>(loop->t)};
+        const auto it{block.begin()};
+        loop = it != block.end() ? GetDoConstructIf(*it) : nullptr;
+      }
     }
+    CheckAssocLoopLevel(level, GetAssociatedClause());
+  } else {
+    context_.Say(GetContext().directiveSource,
+        "A DO loop must follow the %s directive"_err_en_US,
+        parser::ToUpperCaseLetters(
+            llvm::omp::getOpenMPDirectiveName(GetContext().directive).str()));
   }
-  CheckAssocLoopLevel(level, GetAssociatedClause());
 }
 void OmpAttributeVisitor::CheckAssocLoopLevel(
     std::int64_t level, const parser::OmpClause *clause) {
@@ -2023,16 +2001,16 @@ bool OmpAttributeVisitor::Pre(const parser::OpenMPAllocatorsConstruct &x) {
 void OmpAttributeVisitor::Post(const parser::OmpDefaultClause &x) {
   if (!dirContext_.empty()) {
     switch (x.v) {
-    case parser::OmpDefaultClause::Type::Private:
+    case parser::OmpDefaultClause::DataSharingAttribute::Private:
       SetContextDefaultDSA(Symbol::Flag::OmpPrivate);
       break;
-    case parser::OmpDefaultClause::Type::Firstprivate:
+    case parser::OmpDefaultClause::DataSharingAttribute::Firstprivate:
       SetContextDefaultDSA(Symbol::Flag::OmpFirstPrivate);
       break;
-    case parser::OmpDefaultClause::Type::Shared:
+    case parser::OmpDefaultClause::DataSharingAttribute::Shared:
       SetContextDefaultDSA(Symbol::Flag::OmpShared);
       break;
-    case parser::OmpDefaultClause::Type::None:
+    case parser::OmpDefaultClause::DataSharingAttribute::None:
       SetContextDefaultDSA(Symbol::Flag::OmpNone);
       break;
     }
@@ -2097,17 +2075,16 @@ void OmpAttributeVisitor::Post(const parser::OpenMPAllocatorsConstruct &x) {
           std::get<parser::OmpObjectList>(alloc->v.t),
           std::get<parser::Statement<parser::AllocateStmt>>(x.t).statement);
 
-      const auto &allocMod{
-          std::get<std::optional<parser::OmpAllocateClause::AllocateModifier>>(
-              alloc->v.t)};
+      auto &modifiers{OmpGetModifiers(alloc->v)};
+      bool hasAllocator{
+          OmpGetUniqueModifier<parser::OmpAllocatorSimpleModifier>(modifiers) ||
+          OmpGetUniqueModifier<parser::OmpAllocatorComplexModifier>(modifiers)};
+
       // TODO: As with allocate directive, exclude the case when a requires
       //       directive with the dynamic_allocators clause is present in
       //       the same compilation unit (OMP5.0 2.11.3).
       if (IsNestedInDirective(llvm::omp::Directive::OMPD_target) &&
-          (!allocMod.has_value() ||
-              std::holds_alternative<
-                  parser::OmpAllocateClause::AllocateModifier::Align>(
-                  allocMod->u))) {
+          !hasAllocator) {
         context_.Say(x.source,
             "ALLOCATORS directives that appear in a TARGET region "
             "must specify an allocator"_err_en_US);
@@ -2119,11 +2096,12 @@ void OmpAttributeVisitor::Post(const parser::OpenMPAllocatorsConstruct &x) {
 
 static bool IsPrivatizable(const Symbol *sym) {
   auto *misc{sym->detailsIf<MiscDetails>()};
-  return !IsProcedure(*sym) && !IsNamedConstant(*sym) &&
+  return IsVariableName(*sym) && !IsProcedure(*sym) && !IsNamedConstant(*sym) &&
       !semantics::IsAssumedSizeArray(
           *sym) && /* OpenMP 5.2, 5.1.1: Assumed-size arrays are shared*/
       !sym->owner().IsDerivedType() &&
       sym->owner().kind() != Scope::Kind::ImpliedDos &&
+      sym->owner().kind() != Scope::Kind::Forall &&
       !sym->detailsIf<semantics::AssocEntityDetails>() &&
       !sym->detailsIf<semantics::NamelistDetails>() &&
       (!misc ||

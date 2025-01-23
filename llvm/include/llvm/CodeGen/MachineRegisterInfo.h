@@ -942,7 +942,7 @@ public:
     MCRegAliasIterator R(PhysReg, TRI, true);
 
     for (; R.isValid(); ++R)
-      ReservedRegs.set(*R);
+      ReservedRegs.set((*R).id());
   }
 
   /// reservedRegsFrozen - Returns true after freezeReservedRegs() was called
@@ -955,7 +955,7 @@ public:
   /// register.  Any register can be reserved before freezeReservedRegs() is
   /// called.
   bool canReserveReg(MCRegister PhysReg) const {
-    return !reservedRegsFrozen() || ReservedRegs.test(PhysReg);
+    return !reservedRegsFrozen() || ReservedRegs.test(PhysReg.id());
   }
 
   /// getReservedRegs - Returns a reference to the frozen set of reserved
@@ -1099,9 +1099,6 @@ public:
       return !operator==(x);
     }
 
-    /// atEnd - return true if this iterator is equal to reg_end() on the value.
-    bool atEnd() const { return Op == nullptr; }
-
     // Iterator traversal: forward iteration only
     defusechain_iterator &operator++() {          // Preincrement
       assert(Op && "Cannot increment end iterator!");
@@ -1206,9 +1203,6 @@ public:
     bool operator!=(const defusechain_instr_iterator &x) const {
       return !operator==(x);
     }
-
-    /// atEnd - return true if this iterator is equal to reg_end() on the value.
-    bool atEnd() const { return Op == nullptr; }
 
     // Iterator traversal: forward iteration only
     defusechain_instr_iterator &operator++() {          // Preincrement

@@ -34,6 +34,7 @@
 #include "clang/Sema/CodeCompleteConsumer.h"
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/Designator.h"
+#include "clang/Sema/HeuristicResolver.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Overload.h"
 #include "clang/Sema/ParsedAttr.h"
@@ -121,8 +122,7 @@ private:
         return;
       }
 
-      if (const NamedDecl *PrevND =
-              DeclOrVector.dyn_cast<const NamedDecl *>()) {
+      if (const NamedDecl *PrevND = dyn_cast<const NamedDecl *>(DeclOrVector)) {
         // 1 -> 2 elements: create the vector of results and push in the
         // existing declaration.
         DeclIndexPairVector *Vec = new DeclIndexPairVector;
@@ -131,8 +131,8 @@ private:
       }
 
       // Add the new element to the end of the vector.
-      DeclOrVector.get<DeclIndexPairVector *>()->push_back(
-          DeclIndexPair(ND, Index));
+      cast<DeclIndexPairVector *>(DeclOrVector)
+          ->push_back(DeclIndexPair(ND, Index));
     }
 
     ~ShadowMapEntry() {
@@ -659,13 +659,13 @@ public:
       : DeclOrIterator(Iterator), SingleDeclIndex(0) {}
 
   iterator &operator++() {
-    if (DeclOrIterator.is<const NamedDecl *>()) {
+    if (isa<const NamedDecl *>(DeclOrIterator)) {
       DeclOrIterator = (NamedDecl *)nullptr;
       SingleDeclIndex = 0;
       return *this;
     }
 
-    const DeclIndexPair *I = DeclOrIterator.get<const DeclIndexPair *>();
+    const DeclIndexPair *I = cast<const DeclIndexPair *>(DeclOrIterator);
     ++I;
     DeclOrIterator = I;
     return *this;
@@ -681,7 +681,7 @@ public:
     if (const NamedDecl *ND = DeclOrIterator.dyn_cast<const NamedDecl *>())
       return reference(ND, SingleDeclIndex);
 
-    return *DeclOrIterator.get<const DeclIndexPair *>();
+    return *cast<const DeclIndexPair *>(DeclOrIterator);
   }
 
   pointer operator->() const { return pointer(**this); }
@@ -702,18 +702,18 @@ ResultBuilder::ShadowMapEntry::begin() const {
   if (DeclOrVector.isNull())
     return iterator();
 
-  if (const NamedDecl *ND = DeclOrVector.dyn_cast<const NamedDecl *>())
+  if (const NamedDecl *ND = dyn_cast<const NamedDecl *>(DeclOrVector))
     return iterator(ND, SingleDeclIndex);
 
-  return iterator(DeclOrVector.get<DeclIndexPairVector *>()->begin());
+  return iterator(cast<DeclIndexPairVector *>(DeclOrVector)->begin());
 }
 
 ResultBuilder::ShadowMapEntry::iterator
 ResultBuilder::ShadowMapEntry::end() const {
-  if (DeclOrVector.is<const NamedDecl *>() || DeclOrVector.isNull())
+  if (isa<const NamedDecl *>(DeclOrVector) || DeclOrVector.isNull())
     return iterator();
 
-  return iterator(DeclOrVector.get<DeclIndexPairVector *>()->end());
+  return iterator(cast<DeclIndexPairVector *>(DeclOrVector)->end());
 }
 
 /// Compute the qualification required to get from the current context
@@ -5736,11 +5736,19 @@ private:
 // In particular, when E->getType() is DependentTy, try to guess a likely type.
 // We accept some lossiness (like dropping parameters).
 // We only try to handle common expressions on the LHS of MemberExpr.
-QualType getApproximateType(const Expr *E) {
+QualType getApproximateType(const Expr *E, HeuristicResolver &Resolver) {
   if (E->getType().isNull())
     return QualType();
   E = E->IgnoreParenImpCasts();
   QualType Unresolved = E->getType();
+  // Resolve DependentNameType
+  if (const auto *DNT = Unresolved->getAs<DependentNameType>()) {
+    if (auto Decls = Resolver.resolveDependentNameType(DNT);
+        Decls.size() == 1) {
+      if (const auto *TD = dyn_cast<TypeDecl>(Decls[0]))
+        return QualType(TD->getTypeForDecl(), 0);
+    }
+  }
   // We only resolve DependentTy, or undeduced autos (including auto* etc).
   if (!Unresolved->isSpecificBuiltinType(BuiltinType::Dependent)) {
     AutoType *Auto = Unresolved->getContainedAutoType();
@@ -5749,7 +5757,7 @@ QualType getApproximateType(const Expr *E) {
   }
   // A call: approximate-resolve callee to a function type, get its return type
   if (const CallExpr *CE = llvm::dyn_cast<CallExpr>(E)) {
-    QualType Callee = getApproximateType(CE->getCallee());
+    QualType Callee = getApproximateType(CE->getCallee(), Resolver);
     if (Callee.isNull() ||
         Callee->isSpecificPlaceholderType(BuiltinType::BoundMember))
       Callee = Expr::findBoundMemberType(CE->getCallee());
@@ -5792,7 +5800,7 @@ QualType getApproximateType(const Expr *E) {
   if (const auto *CDSME = llvm::dyn_cast<CXXDependentScopeMemberExpr>(E)) {
     QualType Base = CDSME->isImplicitAccess()
                         ? CDSME->getBaseType()
-                        : getApproximateType(CDSME->getBase());
+                        : getApproximateType(CDSME->getBase(), Resolver);
     if (CDSME->isArrow() && !Base.isNull())
       Base = Base->getPointeeType(); // could handle unique_ptr etc here?
     auto *RD =
@@ -5813,14 +5821,15 @@ QualType getApproximateType(const Expr *E) {
   if (const auto *DRE = llvm::dyn_cast<DeclRefExpr>(E)) {
     if (const auto *VD = llvm::dyn_cast<VarDecl>(DRE->getDecl())) {
       if (VD->hasInit())
-        return getApproximateType(VD->getInit());
+        return getApproximateType(VD->getInit(), Resolver);
     }
   }
   if (const auto *UO = llvm::dyn_cast<UnaryOperator>(E)) {
     if (UO->getOpcode() == UnaryOperatorKind::UO_Deref) {
       // We recurse into the subexpression because it could be of dependent
       // type.
-      if (auto Pointee = getApproximateType(UO->getSubExpr())->getPointeeType();
+      if (auto Pointee =
+              getApproximateType(UO->getSubExpr(), Resolver)->getPointeeType();
           !Pointee.isNull())
         return Pointee;
       // Our caller expects a non-null result, even though the SubType is
@@ -5857,13 +5866,16 @@ void SemaCodeCompletion::CodeCompleteMemberReferenceExpr(
       SemaRef.PerformMemberExprBaseConversion(Base, IsArrow);
   if (ConvertedBase.isInvalid())
     return;
-  QualType ConvertedBaseType = getApproximateType(ConvertedBase.get());
+  QualType ConvertedBaseType =
+      getApproximateType(ConvertedBase.get(), Resolver);
 
   enum CodeCompletionContext::Kind contextKind;
 
   if (IsArrow) {
-    if (const auto *Ptr = ConvertedBaseType->getAs<PointerType>())
-      ConvertedBaseType = Ptr->getPointeeType();
+    if (QualType PointeeType = Resolver.getPointeeType(ConvertedBaseType);
+        !PointeeType.isNull()) {
+      ConvertedBaseType = PointeeType;
+    }
   }
 
   if (IsArrow) {
@@ -5894,14 +5906,15 @@ void SemaCodeCompletion::CodeCompleteMemberReferenceExpr(
       return false;
     Base = ConvertedBase.get();
 
-    QualType BaseType = getApproximateType(Base);
+    QualType BaseType = getApproximateType(Base, Resolver);
     if (BaseType.isNull())
       return false;
     ExprValueKind BaseKind = Base->getValueKind();
 
     if (IsArrow) {
-      if (const PointerType *Ptr = BaseType->getAs<PointerType>()) {
-        BaseType = Ptr->getPointeeType();
+      if (QualType PointeeType = Resolver.getPointeeType(BaseType);
+          !PointeeType.isNull()) {
+        BaseType = PointeeType;
         BaseKind = VK_LValue;
       } else if (BaseType->isObjCObjectPointerType() ||
                  BaseType->isTemplateTypeParmType()) {
@@ -10473,4 +10486,5 @@ void SemaCodeCompletion::GatherGlobalCodeCompletions(
 
 SemaCodeCompletion::SemaCodeCompletion(Sema &S,
                                        CodeCompleteConsumer *CompletionConsumer)
-    : SemaBase(S), CodeCompleter(CompletionConsumer) {}
+    : SemaBase(S), CodeCompleter(CompletionConsumer),
+      Resolver(S.getASTContext()) {}

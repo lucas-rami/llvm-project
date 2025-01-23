@@ -14,7 +14,7 @@
 #include "NVPTX.h"
 #include "NVPTXUtilities.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/IR/NVVMIntrinsicFlags.h"
+#include "llvm/IR/NVVMIntrinsicUtils.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrInfo.h"
@@ -450,4 +450,6 @@ void NVPTXInstPrinter::printTmaReductionMode(const MCInst *MI, int OpNum,
     O << ".xor";
     return;
   }
+  llvm_unreachable(
+      "Invalid Reduction Op in printCpAsyncBulkTensorReductionMode");
 }
