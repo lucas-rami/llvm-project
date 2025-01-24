@@ -1913,3 +1913,8 @@ bool TargetInstrInfo::isMBBSafeToOutlineFrom(MachineBasicBlock &MBB,
   }
   return true;
 }
+
+bool TargetInstrInfo::isGlobalMemoryObject(const MachineInstr *MI) const {
+  return MI->isCall() || MI->hasUnmodeledSideEffects() ||
+         (MI->hasOrderedMemoryRef() && !MI->isDereferenceableInvariantLoad());
+}
