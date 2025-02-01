@@ -193,8 +193,8 @@ sections with improvements to Clang's support for those languages.
 
 C++ Language Changes
 --------------------
-- Allow single element access of GCC vector/ext_vector_type object to be 
-  constant expression. Supports the `V.xyzw` syntax and other tidbits 
+- Allow single element access of GCC vector/ext_vector_type object to be
+  constant expression. Supports the `V.xyzw` syntax and other tidbits
   as seen in OpenCL. Selecting multiple elements is left as a future work.
   While the implementation already existed since Clang 4, it was turned off by
   default, and was controlled with the `-frelaxed-template-template-args` flag.
@@ -766,7 +766,7 @@ Improvements to Clang's diagnostics
 
 - Clang now diagnoses dangling assignments for pointer-like objects (annotated with `[[gsl::Pointer]]`) under `-Wdangling-assignment-gsl` (off by default)
   Fixes #GH63310.
-  
+
 - Clang now diagnoses uses of alias templates with a deprecated attribute. (Fixes #GH18236).
 
   .. code-block:: c++
@@ -1159,6 +1159,8 @@ AMDGPU Support
 - Added headers ``gpuintrin.h`` and ``amdgpuintrin.h`` that contains common
   definitions for GPU builtin functions. This header can be included for OpenMP,
   CUDA, HIP, OpenCL, and C/C++.
+
+- Bump the default code object version to 6.
 
 NVPTX Support
 ^^^^^^^^^^^^^^
