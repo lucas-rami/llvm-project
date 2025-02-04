@@ -438,11 +438,12 @@ public:
       : GCNSchedStage(StageID, DAG) {}
 };
 
-/// Attempts to increase function occupancy with respect to VGPR usage by one
-/// and/or reduce function spilling by sinking trivially rematerializable
-/// instructions to their use. When the stage estimates increasing occupancy or
-/// reducing spilling is possible, as few instructions as possible are
-/// rematerialized to reduce potential negative effects on function latency.
+/// Attempts to reduce function spilling or, if there is no spilling, to
+/// increase function occupancy by one with respect to ArchVGPR usage by sinking
+/// trivially rematerializable instructions to their use. When the stage
+/// estimates reducing spilling or increasing occupancy is possible, as few
+/// instructions as possible are rematerialized to reduce potential negative
+/// effects on function latency.
 ///
 /// TODO: We should extend this to work on SGPRs and AGPRs as well.
 class PreRARematStage : public GCNSchedStage {
@@ -485,11 +486,14 @@ private:
   /// Achieved occupancy *only* through rematerializations (pre-rescheduling).
   /// Smaller than or equal to the target occupancy.
   unsigned AchievedOcc;
+  /// Whether the stage is attempting to increase occupancy in the abscence of
+  /// spilling.
+  bool IncreaseOccupancy;
 
-  /// Returns whether remat can increase function occupancy by 1 and/or reduce
-  /// spilling through rematerialization. If it can do at least one, collects
-  /// rematerializable instructions in PreRARematStage::Rematerializations and
-  /// sets the target occupancy in PreRARematStage::TargetOccupancy.
+  /// Returns whether remat can reduce spilling or increase function occupancy
+  /// by 1 through rematerialization. If it can do one, collects instructions in
+  /// PreRARematStage::Rematerializations and sets the target occupancy in
+  /// PreRARematStage::TargetOccupancy.
   bool canIncreaseOccupancyOrReduceSpill();
 
   /// Whether the MI is trivially rematerializable and does not have any virtual
