@@ -38,6 +38,7 @@
 
 #include "comgr-compiler.h"
 #include "comgr-device-libs.h"
+#include "comgr-diagnostic-handler.h"
 #include "comgr-env.h"
 #include "lld/Common/CommonLinkerContext.h"
 #include "lld/Common/Driver.h"
@@ -51,6 +52,7 @@
 #include "clang/Driver/Tool.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
+#include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/FrontendTool/Utils.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/LLVMContext.h"
@@ -640,6 +642,82 @@ void logArgv(raw_ostream &OS, StringRef ProgramName,
   OS << '\n';
   OS.flush();
 }
+
+amd_comgr_status_t executeCommand(const Command &Job, raw_ostream &LogS,
+                                  DiagnosticOptions &DiagOpts) {
+  TextDiagnosticPrinter DiagClient(LogS, &DiagOpts);
+  IntrusiveRefCntPtr<DiagnosticIDs> DiagID(new DiagnosticIDs);
+  DiagnosticsEngine Diags(DiagID, &DiagOpts, &DiagClient, false);
+
+  auto Arguments = Job.getArguments();
+  SmallVector<const char *, 128> Argv;
+  initializeCommandLineArgs(Argv);
+  Argv.append(Arguments.begin(), Arguments.end());
+  Argv.push_back(nullptr);
+
+  // By default clang driver will ask CC1 to leak memory.
+  auto *IT = find(Argv, StringRef("-disable-free"));
+  if (IT != Argv.end()) {
+    Argv.erase(IT);
+  }
+
+  clearLLVMOptions();
+
+  if (Argv[1] == StringRef("-cc1")) {
+    if (env::shouldEmitVerboseLogs()) {
+      logArgv(LogS, "clang", Argv);
+    }
+
+    std::unique_ptr<CompilerInstance> Clang(new CompilerInstance());
+    Clang->setVerboseOutputStream(LogS);
+    if (!Argv.back()) {
+      Argv.pop_back();
+    }
+    if (!CompilerInvocation::CreateFromArgs(Clang->getInvocation(), Argv,
+                                            Diags)) {
+      return AMD_COMGR_STATUS_ERROR;
+    }
+    // Internally this call refers to the invocation created above, so at
+    // this point the DiagnosticsEngine should accurately reflect all user
+    // requested configuration from Argv.
+    Clang->createDiagnostics(&DiagClient, /* ShouldOwnClient */ false);
+    if (!Clang->hasDiagnostics()) {
+      return AMD_COMGR_STATUS_ERROR;
+    }
+    if (!ExecuteCompilerInvocation(Clang.get())) {
+      return AMD_COMGR_STATUS_ERROR;
+    }
+  } else if (Argv[1] == StringRef("-cc1as")) {
+    if (env::shouldEmitVerboseLogs()) {
+      logArgv(LogS, "clang", Argv);
+    }
+    Argv.erase(Argv.begin() + 1);
+    if (!Argv.back()) {
+      Argv.pop_back();
+    }
+    AssemblerInvocation Asm;
+    if (!AssemblerInvocation::createFromArgs(Asm, Argv, Diags)) {
+      return AMD_COMGR_STATUS_ERROR;
+    }
+    if (auto Status = parseLLVMOptions(Asm.LLVMArgs)) {
+      return Status;
+    }
+    if (executeAssembler(Asm, Diags, LogS)) {
+      return AMD_COMGR_STATUS_ERROR;
+    }
+  } else if (Job.getCreator().getName() == LinkerJobName) {
+    if (env::shouldEmitVerboseLogs()) {
+      logArgv(LogS, "lld", Argv);
+    }
+    if (auto Status = linkWithLLD(Arguments, LogS, LogS)) {
+      return Status;
+    }
+  } else {
+    return AMD_COMGR_STATUS_ERROR;
+  }
+  return AMD_COMGR_STATUS_SUCCESS;
+}
+
 } // namespace
 
 amd_comgr_status_t
@@ -686,76 +764,13 @@ AMDGPUCompiler::executeInProcessDriver(ArrayRef<const char *> Args) {
   }
 
   std::unique_ptr<Compilation> C(TheDriver.BuildCompilation(Args));
-  if (!C) {
-    return C->containsError() ? AMD_COMGR_STATUS_ERROR
-                              : AMD_COMGR_STATUS_SUCCESS;
+  if (!C || C->containsError()) {
+    return AMD_COMGR_STATUS_ERROR;
   }
+
   for (auto &Job : C->getJobs()) {
-    auto Arguments = Job.getArguments();
-    SmallVector<const char *, 128> Argv;
-    initializeCommandLineArgs(Argv);
-    Argv.append(Arguments.begin(), Arguments.end());
-    Argv.push_back(nullptr);
-
-    // By default clang driver will ask CC1 to leak memory.
-    auto *IT = find(Argv, StringRef("-disable-free"));
-    if (IT != Argv.end()) {
-      Argv.erase(IT);
-    }
-
-    clearLLVMOptions();
-
-    if (Argv[1] == StringRef("-cc1")) {
-      if (env::shouldEmitVerboseLogs()) {
-        logArgv(LogS, "clang", Argv);
-      }
-
-      std::unique_ptr<CompilerInstance> Clang(new CompilerInstance());
-      Clang->setVerboseOutputStream(LogS);
-      if (!Argv.back()) {
-        Argv.pop_back();
-      }
-      if (!CompilerInvocation::CreateFromArgs(Clang->getInvocation(), Argv,
-                                              Diags)) {
-        return AMD_COMGR_STATUS_ERROR;
-      }
-      // Internally this call refers to the invocation created above, so at
-      // this point the DiagnosticsEngine should accurately reflect all user
-      // requested configuration from Argv.
-      Clang->createDiagnostics(DiagClient, /* ShouldOwnClient */ false);
-      if (!Clang->hasDiagnostics()) {
-        return AMD_COMGR_STATUS_ERROR;
-      }
-      if (!ExecuteCompilerInvocation(Clang.get())) {
-        return AMD_COMGR_STATUS_ERROR;
-      }
-    } else if (Argv[1] == StringRef("-cc1as")) {
-      if (env::shouldEmitVerboseLogs()) {
-        logArgv(LogS, "clang", Argv);
-      }
-      Argv.erase(Argv.begin() + 1);
-      if (!Argv.back()) {
-        Argv.pop_back();
-      }
-      AssemblerInvocation Asm;
-      if (!AssemblerInvocation::createFromArgs(Asm, Argv, Diags)) {
-        return AMD_COMGR_STATUS_ERROR;
-      }
-      if (auto Status = parseLLVMOptions(Asm.LLVMArgs)) {
-        return Status;
-      }
-      if (executeAssembler(Asm, Diags, LogS)) {
-        return AMD_COMGR_STATUS_ERROR;
-      }
-    } else if (Job.getCreator().getName() == LinkerJobName) {
-      if (env::shouldEmitVerboseLogs()) {
-        logArgv(LogS, "lld", Argv);
-      }
-      if (auto Status = linkWithLLD(Arguments, LogS, LogS)) {
-        return Status;
-      }
-    } else {
-      return AMD_COMGR_STATUS_ERROR;
+    if (auto Status = executeCommand(Job, LogS, *DiagOpts)) {
+      return Status;
     }
   }
   return AMD_COMGR_STATUS_SUCCESS;
@@ -1353,7 +1368,7 @@ amd_comgr_status_t AMDGPUCompiler::linkBitcodeToBitcode() {
   SMDiagnostic SMDiag;
   LLVMContext Context;
   Context.setDiagnosticHandler(
-      std::make_unique<AMDGPUCompilerDiagnosticHandler>(this), true);
+      std::make_unique<AMDGPUCompilerDiagnosticHandler>(this->LogS), true);
 
   auto Composite = std::make_unique<llvm::Module>("llvm-link", Context);
   Linker L(*Composite);
@@ -1867,7 +1882,7 @@ amd_comgr_status_t AMDGPUCompiler::translateSpirvToBitcode() {
 
   LLVMContext Context;
   Context.setDiagnosticHandler(
-    std::make_unique<AMDGPUCompilerDiagnosticHandler>(this), true);
+      std::make_unique<AMDGPUCompilerDiagnosticHandler>(this->LogS), true);
 
   for (auto *Input : InSet->DataObjects) {
 
