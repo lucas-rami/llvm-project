@@ -279,5 +279,35 @@ llvm::StringRef getHIPPath() { return getDetector()->getHIPPath(); }
 
 llvm::StringRef getLLVMPath() { return getDetector()->getLLVMPath(); }
 
+StringRef getCachePolicy() {
+  static const char *EnvCachePolicy = std::getenv("AMD_COMGR_CACHE_POLICY");
+  return EnvCachePolicy;
+}
+
+StringRef getCacheDirectory() {
+  // By default the cache is deactivated. We hope to remove this variable in the
+  // future.
+  static const char *Enable = std::getenv("AMD_COMGR_CACHE");
+  bool CacheDisabled = !Enable || StringRef(Enable) == "0";
+  if (CacheDisabled)
+    return "";
+
+  static const char *EnvCacheDirectory = std::getenv("AMD_COMGR_CACHE_DIR");
+  if (EnvCacheDirectory)
+    return EnvCacheDirectory;
+
+  // mark Result as static to keep it cached across calls
+  static SmallString<256> Result;
+  if (!Result.empty())
+    return Result;
+
+  if (sys::path::cache_directory(Result)) {
+    sys::path::append(Result, Twine("comgr_cache"));
+    return Result;
+  }
+
+  return "";
+}
+
 } // namespace env
 } // namespace COMGR
