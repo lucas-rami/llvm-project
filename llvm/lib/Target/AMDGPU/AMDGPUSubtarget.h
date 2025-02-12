@@ -88,6 +88,9 @@ public:
   /// \returns Default range flat work group size for a calling convention.
   std::pair<unsigned, unsigned> getDefaultFlatWorkGroupSize(CallingConv::ID CC) const;
 
+  /// \returns Pair of minimum/maximum LDS allocation size for function \p F.
+  std::pair<unsigned, unsigned> getLDSSize(const Function &F) const;
+
   /// \returns Subtarget's default pair of minimum/maximum flat work group sizes
   /// for function \p F, or minimum/maximum flat work group sizes explicitly
   /// requested using "amdgpu-flat-work-group-size" attribute attached to
@@ -118,9 +121,10 @@ public:
   std::pair<unsigned, unsigned>
   getWavesPerEU(const Function &F,
                 std::pair<unsigned, unsigned> FlatWorkGroupSizes) const;
-  std::pair<unsigned, unsigned> getEffectiveWavesPerEU(
-      std::pair<unsigned, unsigned> WavesPerEU,
-      std::pair<unsigned, unsigned> FlatWorkGroupSizes) const;
+  std::pair<unsigned, unsigned>
+  getEffectiveWavesPerEU(std::pair<unsigned, unsigned> WavesPerEU,
+                         std::pair<unsigned, unsigned> FlatWorkGroupSizes,
+                         unsigned LDSBytes = 0) const;
 
   /// Return the amount of LDS that can be used that will not restrict the
   /// occupancy lower than WaveCount.
@@ -128,12 +132,21 @@ public:
                                            const Function &) const;
 
   /// Subtarget's minimum/maximum occupancy, in number of waves per EU, that can
+  /// be achieved when the range of workgroup sizes is \p FlatWorkGroupSizes and
+  /// each workgroup requires \p LDSBytes bytes of LDS space.
+  std::pair<unsigned, unsigned> getOccupancyWithWorkGroupSizes(
+      uint32_t LDSBytes,
+      std::pair<unsigned, unsigned> FlatWorkGroupSizes) const;
+
+  /// Subtarget's minimum/maximum occupancy, in number of waves per EU, that can
   /// be achieved when the only function running on a CU is \p F and each
   /// workgroup running the function requires \p LDSBytes bytes of LDS space.
   /// This notably depends on the range of allowed flat group sizes for the
   /// function and hardware characteristics.
   std::pair<unsigned, unsigned>
-  getOccupancyWithWorkGroupSizes(uint32_t LDSBytes, const Function &F) const;
+  getOccupancyWithWorkGroupSizes(uint32_t LDSBytes, const Function &F) const {
+    return getOccupancyWithWorkGroupSizes(LDSBytes, getFlatWorkGroupSizes(F));
+  }
 
   /// Subtarget's minimum/maximum occupancy, in number of waves per EU, that can
   /// be achieved when the only function running on a CU is \p MF. This notably
