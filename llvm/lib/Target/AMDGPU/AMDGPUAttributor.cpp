@@ -231,7 +231,8 @@ public:
                          std::pair<unsigned, unsigned> WavesPerEU,
                          std::pair<unsigned, unsigned> FlatWorkGroupSize) {
     const GCNSubtarget &ST = TM.getSubtarget<GCNSubtarget>(F);
-    return ST.getEffectiveWavesPerEU(WavesPerEU, FlatWorkGroupSize);
+    return ST.getEffectiveWavesPerEU(WavesPerEU, FlatWorkGroupSize,
+                                     ST.getLDSSize(F).first);
   }
 
   unsigned getMaxWavesPerEU(const Function &F) {
