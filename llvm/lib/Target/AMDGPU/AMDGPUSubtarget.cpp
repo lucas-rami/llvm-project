@@ -187,27 +187,18 @@ AMDGPUSubtarget::getLDSSize(const Function &F) const {
 std::pair<unsigned, unsigned> AMDGPUSubtarget::getEffectiveWavesPerEU(
     std::pair<unsigned, unsigned> Requested,
     std::pair<unsigned, unsigned> FlatWorkGroupSizes, unsigned LDSBytes) const {
-  auto [MinOcc, MaxOcc] =
+  auto [MinWaves, MaxWaves] =
       getOccupancyWithWorkGroupSizes(LDSBytes, FlatWorkGroupSizes);
-  if (!Requested.first)
-    Requested.first = MinOcc;
-  if (!Requested.second)
-    Requested.second = MaxOcc;
-
-  LLVM_DEBUG(dbgs() << "W/EU WG size [" << FlatWorkGroupSizes.first << ", "
-                    << FlatWorkGroupSizes.second << "]\n");
-  // Make sure requested minimum is less than requested maximum and does not
-  // exceed maximum occupancy achievable w.r.t. group and LDS size. Any kernel
-  // can have the minimal number of waves per EU of 1 if explicitly requested,
-  // so we always honor a valid requested minimum.
-  if (Requested.first > Requested.second) {
-    LLVM_DEBUG(dbgs() << "W/EU default [" << MinOcc << ", " << MaxOcc << "]\n");
-    return {MinOcc, MaxOcc};
+  if (Requested.first <= Requested.second) {
+    if (Requested.first && Requested.first < MaxWaves) {
+      MinWaves = Requested.first;
+    }
+    if (Requested.second && Requested.second < MaxWaves) {
+      MaxWaves = Requested.second;
+    }
   }
-  LLVM_DEBUG(dbgs() << "W/EU custom [" << Requested.first << ", "
-                    << std::min(Requested.second, MaxOcc) << "]\n");
-  assert(false && "what");
-  return {Requested.first, std::min(Requested.second, MaxOcc)};
+  LLVM_DEBUG(dbgs() << "Waves/EU: [" << MinWaves << "," << MaxWaves << "]\n");
+  return {MinWaves, MaxWaves};
 }
 
 std::pair<unsigned, unsigned> AMDGPUSubtarget::getWavesPerEU(
