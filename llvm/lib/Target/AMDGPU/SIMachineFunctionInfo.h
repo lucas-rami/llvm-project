@@ -446,6 +446,7 @@ class SIMachineFunctionInfo final : public AMDGPUMachineFunction,
 private:
   unsigned NumUserSGPRs = 0;
   unsigned NumSystemSGPRs = 0;
+  unsigned NumSystemVGPRs = 0;
 
   bool HasSpilledSGPRs = false;
   bool HasSpilledVGPRs = false;
@@ -581,6 +582,12 @@ public:
   Register getVGPRForAGPRCopy() const {
     return VGPRForAGPRCopy;
   }
+
+  /// On gfx908, in order to guarantee copying between AGPRs, we need a scratch
+  /// VGPR available at all times. If needed, reserve highest available VGPR
+  /// w.r.t. waves/EU range. After RA, shift it to the lowest available unused
+  /// VGPR if one exists.
+  void setVGPRForAGPRCopyIfNeeded(const GCNSubtarget &ST);
 
   void setVGPRForAGPRCopy(Register NewVGPRForAGPRCopy) {
     VGPRForAGPRCopy = NewVGPRForAGPRCopy;
@@ -736,6 +743,10 @@ public:
   }
 
   Register getSGPRForEXECCopy() const { return SGPRForEXECCopy; }
+
+  /// Reserve the SGPR(s) to save/restore EXEC for WWM spill/copy handling.
+  /// Reserve highest available SGPR(s) w.r.t. waves/EU range.
+  void setSGPRForEXECCopy(const MachineFunction &MF);
 
   void setSGPRForEXECCopy(Register Reg) { SGPRForEXECCopy = Reg; }
 
@@ -1076,6 +1087,16 @@ public:
   /// execution unit.
   std::pair<unsigned, unsigned> getWavesPerEU() const {
     return WavesPerEU;
+  }
+
+  void limitWavesPerEU(const MachineFunction &MF, unsigned Limit) {
+    if (WavesPerEU.second > Limit) {
+      WavesPerEU.second = Limit;
+      WavesPerEU.first = std::min(WavesPerEU.first, WavesPerEU.second);
+      setSGPRForEXECCopy(MF);
+      setVGPRForAGPRCopyIfNeeded(MF.getSubtarget<GCNSubtarget>());
+      limitOccupancy(Limit);
+    }
   }
 
   /// \returns Default/requested minimum number of waves per execution unit.

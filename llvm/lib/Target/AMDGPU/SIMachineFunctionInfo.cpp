@@ -45,10 +45,10 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const Function &F,
   const GCNSubtarget &ST = *static_cast<const GCNSubtarget *>(STI);
   FlatWorkGroupSizes = ST.getFlatWorkGroupSizes(F);
   WavesPerEU = ST.getWavesPerEU(F);
+  Occupancy = WavesPerEU.second;
   MaxNumWorkGroups = ST.getMaxNumWorkGroups(F);
   assert(MaxNumWorkGroups.size() == 3);
 
-  Occupancy = ST.computeOccupancy(F, getLDSSize()).second;
   CallingConv::ID CC = F.getCallingConv();
 
   VRegFlags.reserve(1024);
@@ -166,13 +166,7 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const Function &F,
   MaxMemoryClusterDWords = F.getFnAttributeAsParsedInteger(
       "amdgpu-max-memory-cluster-dwords", DefaultMemoryClusterDWordsLimit);
 
-  // On GFX908, in order to guarantee copying between AGPRs, we need a scratch
-  // VGPR available at all times. For now, reserve highest available VGPR. After
-  // RA, shift it to the lowest available unused VGPR if the one exist.
-  if (ST.hasMAIInsts() && !ST.hasGFX90AInsts()) {
-    VGPRForAGPRCopy =
-        AMDGPU::VGPR_32RegClass.getRegister(ST.getMaxNumVGPRs(F) - 1);
-  }
+  setVGPRForAGPRCopyIfNeeded(ST);
 }
 
 MachineFunctionInfo *SIMachineFunctionInfo::clone(
@@ -317,6 +311,23 @@ void SIMachineFunctionInfo::splitWWMSpillRegisters(
     else
       ScratchRegs.push_back(Reg);
   }
+}
+
+void SIMachineFunctionInfo::setVGPRForAGPRCopyIfNeeded(const GCNSubtarget &ST) {
+  if (ST.hasVGPRForAGPRCopy()) {
+    setVGPRForAGPRCopy(AMDGPU::VGPR_32RegClass.getRegister(
+        ST.getMaxNumVGPRs(WavesPerEU.first) - 1));
+  }
+}
+
+void SIMachineFunctionInfo::setSGPRForEXECCopy(const MachineFunction &MF) {
+  const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
+  const SIRegisterInfo *TRI = ST.getRegisterInfo();
+  setSGPRForEXECCopy(
+      ST.isWave32()
+          ? AMDGPU::SGPR_32RegClass.getRegister(ST.getMaxNumSGPRs(MF) - 1)
+          : TRI->getAlignedHighSGPRForRC(MF, /*Align=*/2,
+                                         &AMDGPU::SGPR_64RegClass));
 }
 
 bool SIMachineFunctionInfo::isCalleeSavedReg(const MCPhysReg *CSRegs,

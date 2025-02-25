@@ -392,6 +392,17 @@ unsigned GCNSubtarget::getReservedNumSGPRs(const MachineFunction &MF) const {
   return getBaseReservedNumSGPRs(MFI.getUserSGPRInfo().hasFlatScratchInit());
 }
 
+unsigned GCNSubtarget::getReservedNumVGPRs(const MachineFunction &MF) const {
+  const SIMachineFunctionInfo &MFI = *MF.getInfo<SIMachineFunctionInfo>();
+  const SIRegisterInfo *TRI = getRegisterInfo();
+  unsigned NumReserved = hasVGPRForAGPRCopy();
+  for (Register Reg : MFI.getWWMReservedRegs()) {
+    for (MCRegAliasIterator R(Reg, TRI, true); R.isValid(); ++R, ++NumReserved)
+      ;
+  }
+  return NumReserved;
+}
+
 unsigned GCNSubtarget::getReservedNumSGPRs(const Function &F) const {
   // In principle we do not need to reserve SGPR pair used for flat_scratch if
   // we know flat instructions do not access the stack anywhere in the

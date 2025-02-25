@@ -708,7 +708,6 @@ BitVector SIRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // Reserve VGPRs/AGPRs.
   //
   auto [MaxNumVGPRs, MaxNumAGPRs] = getMaxNumVectorRegs(MF);
-
   for (const TargetRegisterClass *RC : regclasses()) {
     if (RC->isBaseClass() && isVGPRClass(RC)) {
       unsigned NumRegs = divideCeil(getRegSizeInBits(*RC), 32);
@@ -736,9 +735,8 @@ BitVector SIRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
   // On GFX908, in order to guarantee copying between AGPRs, we need a scratch
   // VGPR available at all times.
-  if (ST.hasMAIInsts() && !ST.hasGFX90AInsts()) {
+  if (ST.hasVGPRForAGPRCopy())
     reserveRegisterTuples(Reserved, MFI->getVGPRForAGPRCopy());
-  }
 
   // During wwm-regalloc, reserve the registers for perlane VGPR allocation. The
   // MFI->getNonWWMRegMask() field will have a valid bitmask only during

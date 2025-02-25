@@ -649,6 +649,10 @@ public:
     return FlatScratchInsts;
   }
 
+  /// Returns whether the subtarget needs a scratch VGPR at all times in order
+  /// to guarantee copying between AGPRs.
+  bool hasVGPRForAGPRCopy() const { return hasMAIInsts() && !hasGFX90AInsts(); }
+
   // Check if target supports ST addressing mode with FLAT scratch instructions.
   // The ST addressing mode means no registers are used, either VGPR or SGPR,
   // but only immediate offset is swizzled and added to the FLAT scratch base.
@@ -1483,6 +1487,8 @@ public:
 
   /// \returns Reserved number of SGPRs for given function \p F.
   unsigned getReservedNumSGPRs(const Function &F) const;
+
+  unsigned getReservedNumVGPRs(const MachineFunction &MF) const;
 
   /// \returns max num SGPRs. This is the common utility
   /// function called by MachineFunction and Function

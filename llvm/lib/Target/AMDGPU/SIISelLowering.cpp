@@ -15,6 +15,7 @@
 #include "AMDGPU.h"
 #include "AMDGPUInstrInfo.h"
 #include "AMDGPUTargetMachine.h"
+#include "GCNRegPressure.h"
 #include "GCNSubtarget.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "SIMachineFunctionInfo.h"
@@ -16206,14 +16207,7 @@ void SITargetLowering::finalizeLowering(MachineFunction &MF) const {
     reservePrivateMemoryRegs(getTargetMachine(), MF, *TRI, *Info);
   }
 
-  // TODO: Move this logic to getReservedRegs()
-  // Reserve the SGPR(s) to save/restore EXEC for WWM spill/copy handling.
-  unsigned MaxNumSGPRs = ST.getMaxNumSGPRs(MF);
-  Register SReg = ST.isWave32()
-                      ? AMDGPU::SGPR_32RegClass.getRegister(MaxNumSGPRs - 1)
-                      : TRI->getAlignedHighSGPRForRC(MF, /*Align=*/2,
-                                                     &AMDGPU::SGPR_64RegClass);
-  Info->setSGPRForEXECCopy(SReg);
+  Info->setSGPRForEXECCopy(MF);
 
   assert(!TRI->isSubRegister(Info->getScratchRSrcReg(),
                              Info->getStackPtrOffsetReg()));
@@ -16227,8 +16221,6 @@ void SITargetLowering::finalizeLowering(MachineFunction &MF) const {
 
   if (Info->getFrameOffsetReg() != AMDGPU::FP_REG)
     MRI.replaceRegWith(AMDGPU::FP_REG, Info->getFrameOffsetReg());
-
-  Info->limitOccupancy(MF);
 
   if (ST.isWave32() && !MF.empty()) {
     for (auto &MBB : MF) {
@@ -16253,6 +16245,112 @@ void SITargetLowering::finalizeLowering(MachineFunction &MF) const {
       if (NewClassID != -1)
         MRI.setRegClass(Reg, TRI->getRegClass(NewClassID));
     }
+  }
+
+  LLVM_DEBUG(dbgs() << "Finalize lowering!\n");
+
+  enum { SGPR = 0, VGPR = 1, AGPR = 2, NUM_REG_CATS = 3 };
+
+  if (!MF.empty()) {
+    unsigned MaxCounts[NUM_REG_CATS] = {};
+    for (MachineBasicBlock &MBB : MF) {
+      for (MachineInstr &MI : MBB) {
+        TII->fixImplicitOperands(MI);
+        unsigned ReadCounts[NUM_REG_CATS] = {}, DefCounts[NUM_REG_CATS] = {},
+                 EarlyClobberRWCounts[NUM_REG_CATS] = {};
+        LLVM_DEBUG(dbgs() << MI);
+        for (auto [I, MO] : llvm::enumerate(MI.operands())) {
+          if (!MO.isReg()) {
+            LLVM_DEBUG(dbgs() << "  Not a register\n");
+            continue;
+          }
+          const TargetRegisterClass *RC =
+              MO.getReg().isVirtual()
+                  ? MRI.getRegClassOrNull(MO.getReg())
+                  : TII->getRegClass(MI.getDesc(), I, TRI, MF);
+          if (!RC) {
+            LLVM_DEBUG(dbgs() << "  No register class\n");
+            continue;
+          }
+
+          // Compute number of registers covered by the machine operand.
+          unsigned NumRegs;
+          if (MO.getReg().isVirtual()) {
+            unsigned SubReg = MO.getSubReg();
+            LaneBitmask LM = SubReg ? TRI->getSubRegIndexLaneMask(SubReg)
+                                    : MRI.getMaxLaneMaskForVReg(MO.getReg());
+            NumRegs = SIRegisterInfo::getNumCoveredRegs(LM);
+          } else {
+            NumRegs = 1;
+          }
+
+          // Account for the operand in the right catergories and reg classes.
+          bool IsRead = MO.readsReg();
+          bool IsDef = MO.isDef();
+          bool IsEarlyClobber = MO.isEarlyClobber();
+          LLVM_DEBUG(dbgs() << "  Operand " << MO << " -> [" << IsRead << ","
+                            << IsDef << "," << IsEarlyClobber << "]\n");
+          auto CountRegs = [&](unsigned I) -> void {
+            if (IsRead)
+              ReadCounts[I] += NumRegs;
+            if (IsDef)
+              DefCounts[I] += NumRegs;
+            if (IsEarlyClobber && IsRead) {
+              // An early-clobber register that is also read cannot be used as
+              // both an input and an output register.
+              EarlyClobberRWCounts[I] += NumRegs;
+            }
+          };
+          if (TRI->isSGPRClass(RC))
+            CountRegs(SGPR);
+          else if (TRI->isVGPRClass(RC))
+            CountRegs(VGPR);
+          else if (TRI->isAGPRClass(RC))
+            CountRegs(AGPR);
+        }
+
+        auto GetRegUsage = [&](unsigned I) -> unsigned {
+          return std::max(ReadCounts[I], DefCounts[I]) +
+                 EarlyClobberRWCounts[I];
+        };
+        auto SetMax = [&](unsigned I, unsigned NumRegs) -> void {
+          MaxCounts[I] = std::max(MaxCounts[I], NumRegs);
+        };
+
+        LLVM_DEBUG(dbgs() << "  [SGPRs, VGPRs, AGPRs] = [" << GetRegUsage(SGPR)
+                          << "," << GetRegUsage(VGPR) << ","
+                          << GetRegUsage(AGPR) << "]\n");
+
+        SetMax(SGPR, GetRegUsage(SGPR));
+        if (ST.hasGFX90AInsts()) {
+          SetMax(VGPR, GCNRegPressure::getUnifiedVGPRNum(GetRegUsage(VGPR),
+                                                         GetRegUsage(AGPR)));
+        } else {
+          SetMax(VGPR, GetRegUsage(VGPR));
+          SetMax(AGPR, GetRegUsage(AGPR));
+        }
+      }
+    }
+
+    // Add reserved registers to the maximum counts.
+    MaxCounts[SGPR] += ST.getReservedNumSGPRs(MF);
+    MaxCounts[VGPR] += ST.getReservedNumVGPRs(MF);
+
+    LLVM_DEBUG(dbgs() << "[SGPRs, VGPRs, AGPRs] = [" << MaxCounts[SGPR] << ","
+                      << MaxCounts[VGPR] << "," << MaxCounts[AGPR] << "]\n");
+    LLVM_DEBUG(dbgs() << "Waves/EU = [" << Info->getMinWavesPerEU() << ","
+                      << Info->getMaxWavesPerEU() << "]\n");
+    unsigned MinOcc = std::min(Info->getMaxWavesPerEU(),
+                               ST.getOccupancyWithNumSGPRs(MaxCounts[SGPR]));
+    if (ST.hasGFX90AInsts()) {
+      MinOcc = std::min(MinOcc, ST.getOccupancyWithNumVGPRs(MaxCounts[VGPR]));
+    } else {
+      MinOcc = std::min(
+          std::min(MinOcc, ST.getOccupancyWithNumVGPRs(MaxCounts[VGPR])),
+          ST.getOccupancyWithNumVGPRs(MaxCounts[AGPR]));
+    }
+    Info->limitWavesPerEU(MF, MinOcc);
+    LLVM_DEBUG(dbgs() << "  Limiting occupancy to " << MinOcc << "\n");
   }
 
   TargetLoweringBase::finalizeLowering(MF);

@@ -47,13 +47,17 @@ struct GCNRegPressure {
 
   void clear() { std::fill(&Value[0], &Value[TOTAL_KINDS], 0); }
 
+  static unsigned getUnifiedVGPRNum(unsigned NumArchVGPRs, unsigned NumAGPRs) {
+    return alignTo(NumArchVGPRs, 4) + NumAGPRs;
+  }
+
   /// \returns the SGPR32 pressure
   unsigned getSGPRNum() const { return Value[SGPR32]; }
   /// \returns the aggregated ArchVGPR32, AccVGPR32 pressure dependent upon \p
   /// UnifiedVGPRFile
   unsigned getVGPRNum(bool UnifiedVGPRFile) const {
     if (UnifiedVGPRFile) {
-      return Value[AGPR32] ? alignTo(Value[VGPR32], 4) + Value[AGPR32]
+      return Value[AGPR32] ? getUnifiedVGPRNum(Value[VGPR32], Value[AGPR32])
                            : Value[VGPR32] + Value[AGPR32];
     }
     return std::max(Value[VGPR32], Value[AGPR32]);
