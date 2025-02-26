@@ -224,7 +224,7 @@ define amdgpu_ps float @global_atomic_fadd_f32_saddr_rtn_atomicrmw(ptr addrspace
   ; GFX90A-NEXT: {{  $}}
   ; GFX90A-NEXT:   [[PHI1:%[0-9]+]]:vgpr_32 = PHI [[DEF1]], %bb.1, [[GLOBAL_ATOMIC_ADD_F32_SADDR_RTN]], %bb.2
   ; GFX90A-NEXT:   SI_END_CF [[SI_IF1]], implicit-def dead $exec, implicit-def dead $scc, implicit $exec
-  ; GFX90A-NEXT:   [[V_READFIRSTLANE_B32_:%[0-9]+]]:sreg_32 = V_READFIRSTLANE_B32 [[PHI1]], implicit $exec
+  ; GFX90A-NEXT:   [[V_READFIRSTLANE_B32_:%[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 [[PHI1]], implicit $exec
   ; GFX90A-NEXT:   early-clobber %45:vgpr_32 = STRICT_WWM [[V_MOV_B32_dpp6]], implicit $exec
   ; GFX90A-NEXT:   [[V_ADD_F32_e64_6:%[0-9]+]]:vgpr_32 = nofpexcept V_ADD_F32_e64 0, [[V_READFIRSTLANE_B32_]], 0, killed %45, 0, 0, implicit $mode, implicit $exec
   ; GFX90A-NEXT:   [[COPY10:%[0-9]+]]:sreg_64_xexec = COPY [[COPY8]]
@@ -305,7 +305,7 @@ define amdgpu_ps float @global_atomic_fadd_f32_saddr_rtn_atomicrmw(ptr addrspace
   ; GFX940-NEXT: {{  $}}
   ; GFX940-NEXT:   [[PHI1:%[0-9]+]]:vgpr_32 = PHI [[DEF1]], %bb.1, [[GLOBAL_ATOMIC_ADD_F32_SADDR_RTN]], %bb.2
   ; GFX940-NEXT:   SI_END_CF [[SI_IF1]], implicit-def dead $exec, implicit-def dead $scc, implicit $exec
-  ; GFX940-NEXT:   [[V_READFIRSTLANE_B32_:%[0-9]+]]:sreg_32 = V_READFIRSTLANE_B32 [[PHI1]], implicit $exec
+  ; GFX940-NEXT:   [[V_READFIRSTLANE_B32_:%[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 [[PHI1]], implicit $exec
   ; GFX940-NEXT:   early-clobber %44:vgpr_32 = STRICT_WWM [[V_MOV_B32_dpp6]], implicit $exec
   ; GFX940-NEXT:   [[V_ADD_F32_e64_6:%[0-9]+]]:vgpr_32 = nofpexcept V_ADD_F32_e64 0, [[V_READFIRSTLANE_B32_]], 0, killed %44, 0, 0, implicit $mode, implicit $exec
   ; GFX940-NEXT:   [[COPY10:%[0-9]+]]:sreg_64_xexec = COPY [[COPY8]]
@@ -386,7 +386,7 @@ define amdgpu_ps float @global_atomic_fadd_f32_saddr_rtn_atomicrmw(ptr addrspace
   ; GFX11-NEXT: {{  $}}
   ; GFX11-NEXT:   [[PHI1:%[0-9]+]]:vgpr_32 = PHI [[DEF1]], %bb.1, [[GLOBAL_ATOMIC_ADD_F32_SADDR_RTN]], %bb.2
   ; GFX11-NEXT:   SI_END_CF [[SI_IF1]], implicit-def dead $exec, implicit-def dead $scc, implicit $exec
-  ; GFX11-NEXT:   [[V_READFIRSTLANE_B32_:%[0-9]+]]:sreg_32 = V_READFIRSTLANE_B32 [[PHI1]], implicit $exec
+  ; GFX11-NEXT:   [[V_READFIRSTLANE_B32_:%[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 [[PHI1]], implicit $exec
   ; GFX11-NEXT:   early-clobber %44:vgpr_32 = STRICT_WWM [[V_WRITELANE_B32_]], implicit $exec
   ; GFX11-NEXT:   [[V_ADD_F32_e64_5:%[0-9]+]]:vgpr_32 = nofpexcept V_ADD_F32_e64 0, [[V_READFIRSTLANE_B32_]], 0, killed %44, 0, 0, implicit $mode, implicit $exec
   ; GFX11-NEXT:   [[COPY7:%[0-9]+]]:sreg_32_xm0_xexec = COPY [[COPY5]]
