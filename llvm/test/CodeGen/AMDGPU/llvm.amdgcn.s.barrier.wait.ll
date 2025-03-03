@@ -460,11 +460,13 @@ define void @test2_s_barrier_signal_isfirst_var(ptr addrspace(1) %a, ptr addrspa
 ; GCN-NEXT:    s_mov_b32 m0, s0
 ; GCN-NEXT:    s_delay_alu instid0(VALU_DEP_1)
 ; GCN-NEXT:    v_add_co_u32 v7, vcc_lo, v7, v9
+; GCN-NEXT:    s_wait_alu 0xfffd
 ; GCN-NEXT:    v_add_co_ci_u32_e32 v8, vcc_lo, 0, v8, vcc_lo
 ; GCN-NEXT:    global_store_b32 v[7:8], v10, off
 ; GCN-NEXT:    s_wait_storecnt 0x0
 ; GCN-NEXT:    s_barrier_signal_isfirst m0
 ; GCN-NEXT:    s_cselect_b32 vcc_lo, -1, 0
+; GCN-NEXT:    s_wait_alu 0xfffe
 ; GCN-NEXT:    v_dual_cndmask_b32 v2, v4, v2 :: v_dual_cndmask_b32 v3, v5, v3
 ; GCN-NEXT:    global_load_b32 v0, v[0:1], off
 ; GCN-NEXT:    global_load_b32 v1, v[2:3], off
@@ -486,15 +488,18 @@ define void @test2_s_barrier_signal_isfirst_var(ptr addrspace(1) %a, ptr addrspa
 ; GLOBAL-ISEL-NEXT:    s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(VALU_DEP_1)
 ; GLOBAL-ISEL-NEXT:    v_lshlrev_b32_e32 v9, 2, v9
 ; GLOBAL-ISEL-NEXT:    v_add_co_u32 v7, vcc_lo, v7, v9
+; GLOBAL-ISEL-NEXT:    s_wait_alu 0xfffd
 ; GLOBAL-ISEL-NEXT:    v_add_co_ci_u32_e32 v8, vcc_lo, 0, v8, vcc_lo
 ; GLOBAL-ISEL-NEXT:    v_mov_b32_e32 v9, 0
 ; GLOBAL-ISEL-NEXT:    global_store_b32 v[7:8], v9, off
 ; GLOBAL-ISEL-NEXT:    s_wait_storecnt 0x0
 ; GLOBAL-ISEL-NEXT:    s_barrier_signal_isfirst m0
 ; GLOBAL-ISEL-NEXT:    s_cselect_b32 s0, 1, 0
-; GLOBAL-ISEL-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(NEXT) | instid1(SALU_CYCLE_1)
+; GLOBAL-ISEL-NEXT:    s_wait_alu 0xfffe
 ; GLOBAL-ISEL-NEXT:    s_and_b32 s0, 1, s0
+; GLOBAL-ISEL-NEXT:    s_wait_alu 0xfffe
 ; GLOBAL-ISEL-NEXT:    v_cmp_ne_u32_e64 vcc_lo, 0, s0
+; GLOBAL-ISEL-NEXT:    s_wait_alu 0xfffd
 ; GLOBAL-ISEL-NEXT:    v_dual_cndmask_b32 v2, v4, v2 :: v_dual_cndmask_b32 v3, v5, v3
 ; GLOBAL-ISEL-NEXT:    global_load_b32 v0, v[0:1], off
 ; GLOBAL-ISEL-NEXT:    global_load_b32 v1, v[2:3], off
@@ -719,9 +724,9 @@ define void @test5_s_barrier_init_m0(i32 %arg1 ,i32 %arg2) {
 ; GLOBAL-ISEL-NEXT:    s_wait_kmcnt 0x0
 ; GLOBAL-ISEL-NEXT:    v_readfirstlane_b32 s0, v1
 ; GLOBAL-ISEL-NEXT:    v_readfirstlane_b32 s1, v0
-; GLOBAL-ISEL-NEXT:    s_delay_alu instid0(VALU_DEP_2)
+; GLOBAL-ISEL-NEXT:    s_delay_alu instid0(VALU_DEP_2) | instskip(SKIP_1) | instid1(VALU_DEP_1)
 ; GLOBAL-ISEL-NEXT:    s_lshl_b32 s0, 16, s0
-; GLOBAL-ISEL-NEXT:    s_delay_alu instid0(VALU_DEP_1) | instid1(SALU_CYCLE_1)
+; GLOBAL-ISEL-NEXT:    s_wait_alu 0xfffe
 ; GLOBAL-ISEL-NEXT:    s_or_b32 m0, s1, s0
 ; GLOBAL-ISEL-NEXT:    s_barrier_init m0
 ; GLOBAL-ISEL-NEXT:    s_setpc_b64 s[30:31]
@@ -1325,10 +1330,11 @@ define i32 @test5_s_get_barrier_state_m0(i32 %arg) {
 ; GCN-NEXT:    s_wait_bvhcnt 0x0
 ; GCN-NEXT:    s_wait_kmcnt 0x0
 ; GCN-NEXT:    v_readfirstlane_b32 s0, v0
-; GCN-NEXT:    s_delay_alu instid0(VALU_DEP_1) | instskip(SKIP_2) | instid1(SALU_CYCLE_2)
+; GCN-NEXT:    s_delay_alu instid0(VALU_DEP_1) | instskip(SKIP_3) | instid1(SALU_CYCLE_1)
 ; GCN-NEXT:    s_mov_b32 m0, s0
 ; GCN-NEXT:    s_get_barrier_state s0, m0
 ; GCN-NEXT:    s_wait_kmcnt 0x0
+; GCN-NEXT:    s_wait_alu 0xfffe
 ; GCN-NEXT:    v_mov_b32_e32 v0, s0
 ; GCN-NEXT:    s_setpc_b64 s[30:31]
 ;
@@ -1342,7 +1348,8 @@ define i32 @test5_s_get_barrier_state_m0(i32 %arg) {
 ; GLOBAL-ISEL-NEXT:    v_readfirstlane_b32 m0, v0
 ; GLOBAL-ISEL-NEXT:    s_get_barrier_state s0, m0
 ; GLOBAL-ISEL-NEXT:    s_wait_kmcnt 0x0
-; GLOBAL-ISEL-NEXT:    s_delay_alu instid0(SALU_CYCLE_2)
+; GLOBAL-ISEL-NEXT:    s_wait_alu 0xfffe
+; GLOBAL-ISEL-NEXT:    s_delay_alu instid0(SALU_CYCLE_1)
 ; GLOBAL-ISEL-NEXT:    v_mov_b32_e32 v0, s0
 ; GLOBAL-ISEL-NEXT:    s_setpc_b64 s[30:31]
   %state = call i32 @llvm.amdgcn.s.get.barrier.state(i32 %arg)

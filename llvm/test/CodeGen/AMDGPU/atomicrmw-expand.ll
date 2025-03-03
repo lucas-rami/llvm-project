@@ -108,8 +108,9 @@ define float @syncscope_system(ptr %addr, float %val) #0 {
 ; GFX1200-NEXT:    s_wait_loadcnt_dscnt 0x0
 ; GFX1200-NEXT:    global_inv scope:SCOPE_SYS
 ; GFX1200-NEXT:    v_cmp_eq_u32_e32 vcc_lo, v3, v4
+; GFX1200-NEXT:    s_wait_alu 0xfffe
 ; GFX1200-NEXT:    s_or_b32 s0, vcc_lo, s0
-; GFX1200-NEXT:    s_delay_alu instid0(SALU_CYCLE_1)
+; GFX1200-NEXT:    s_wait_alu 0xfffe
 ; GFX1200-NEXT:    s_and_not1_b32 exec_lo, exec_lo, s0
 ; GFX1200-NEXT:    s_cbranch_execnz .LBB0_1
 ; GFX1200-NEXT:  ; %bb.2: ; %atomicrmw.end
@@ -455,8 +456,9 @@ define float @no_unsafe(ptr %addr, float %val) {
 ; GFX1200-NEXT:    s_wait_loadcnt_dscnt 0x0
 ; GFX1200-NEXT:    global_inv scope:SCOPE_SE
 ; GFX1200-NEXT:    v_cmp_eq_u32_e32 vcc_lo, v3, v4
+; GFX1200-NEXT:    s_wait_alu 0xfffe
 ; GFX1200-NEXT:    s_or_b32 s0, vcc_lo, s0
-; GFX1200-NEXT:    s_delay_alu instid0(SALU_CYCLE_1)
+; GFX1200-NEXT:    s_wait_alu 0xfffe
 ; GFX1200-NEXT:    s_and_not1_b32 exec_lo, exec_lo, s0
 ; GFX1200-NEXT:    s_cbranch_execnz .LBB3_1
 ; GFX1200-NEXT:  ; %bb.2: ; %atomicrmw.end

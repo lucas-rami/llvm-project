@@ -1119,8 +1119,8 @@ define amdgpu_kernel void @constant_zextload_v3i8_to_v3i32(ptr addrspace(1) %out
 ; GFX12-NEXT:    v_lshrrev_b16 v1, 8, s2
 ; GFX12-NEXT:    s_and_b32 s3, s2, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s2, s2, 0x80010
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v3, 0 :: v_dual_mov_b32 v0, s3
-; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_2)
 ; GFX12-NEXT:    v_dual_mov_b32 v2, s2 :: v_dual_and_b32 v1, 0xffff, v1
 ; GFX12-NEXT:    global_store_b96 v3, v[0:2], s[0:1]
 ; GFX12-NEXT:    s_nop 0
@@ -1223,8 +1223,8 @@ define amdgpu_kernel void @constant_sextload_v3i8_to_v3i32(ptr addrspace(1) %out
 ; GFX12-NEXT:    v_lshrrev_b16 v1, 8, s2
 ; GFX12-NEXT:    s_sext_i32_i8 s3, s2
 ; GFX12-NEXT:    s_bfe_i32 s2, s2, 0x80010
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v3, 0 :: v_dual_mov_b32 v0, s3
-; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_2)
 ; GFX12-NEXT:    v_bfe_i32 v1, v1, 0, 8
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s2
 ; GFX12-NEXT:    global_store_b96 v3, v[0:2], s[0:1]
@@ -1332,6 +1332,7 @@ define amdgpu_kernel void @constant_zextload_v4i8_to_v4i32(ptr addrspace(1) %out
 ; GFX12-NEXT:    s_bfe_u32 s2, s2, 0x80010
 ; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_1)
 ; GFX12-NEXT:    v_dual_mov_b32 v4, 0 :: v_dual_and_b32 v1, 0xffff, v1
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v0, s4 :: v_dual_mov_b32 v3, s3
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s2
 ; GFX12-NEXT:    global_store_b128 v4, v[0:3], s[0:1]
@@ -1439,6 +1440,7 @@ define amdgpu_kernel void @constant_sextload_v4i8_to_v4i32(ptr addrspace(1) %out
 ; GFX12-NEXT:    s_ashr_i32 s3, s2, 24
 ; GFX12-NEXT:    s_sext_i32_i8 s4, s2
 ; GFX12-NEXT:    s_bfe_i32 s2, s2, 0x80010
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v4, 0 :: v_dual_mov_b32 v3, s3
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s4
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s2
@@ -1597,6 +1599,7 @@ define amdgpu_kernel void @constant_zextload_v8i8_to_v8i32(ptr addrspace(1) %out
 ; GFX12-NEXT:    s_bfe_u32 s3, s3, 0x80010
 ; GFX12-NEXT:    v_dual_mov_b32 v8, 0 :: v_dual_mov_b32 v3, s5
 ; GFX12-NEXT:    v_dual_mov_b32 v0, s7 :: v_dual_mov_b32 v7, s4
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v2, s2 :: v_dual_and_b32 v1, 0xffff, v1
 ; GFX12-NEXT:    v_dual_mov_b32 v4, s6 :: v_dual_and_b32 v5, 0xffff, v5
 ; GFX12-NEXT:    v_mov_b32_e32 v6, s3
@@ -1761,6 +1764,7 @@ define amdgpu_kernel void @constant_sextload_v8i8_to_v8i32(ptr addrspace(1) %out
 ; GFX12-NEXT:    s_sext_i32_i8 s3, s3
 ; GFX12-NEXT:    v_dual_mov_b32 v8, 0 :: v_dual_mov_b32 v3, s6
 ; GFX12-NEXT:    v_dual_mov_b32 v0, s7 :: v_dual_mov_b32 v7, s4
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s2
 ; GFX12-NEXT:    v_bfe_i32 v1, v1, 0, 8
 ; GFX12-NEXT:    v_mov_b32_e32 v4, s3
@@ -2018,11 +2022,13 @@ define amdgpu_kernel void @constant_zextload_v16i8_to_v16i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_lshr_b32 s3, s5, 24
 ; GFX12-NEXT:    s_bfe_u32 s5, s5, 0x80010
 ; GFX12-NEXT:    v_dual_mov_b32 v0, s13 :: v_dual_mov_b32 v7, s8
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v2, s7 :: v_dual_mov_b32 v11, s3
 ; GFX12-NEXT:    v_dual_mov_b32 v6, s6 :: v_dual_and_b32 v1, 0xffff, v1
 ; GFX12-NEXT:    s_lshr_b32 s2, s4, 24
 ; GFX12-NEXT:    s_and_b32 s10, s4, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s4, s4, 0x80010
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v4, s12 :: v_dual_mov_b32 v15, s2
 ; GFX12-NEXT:    v_dual_mov_b32 v8, s11 :: v_dual_and_b32 v5, 0xffff, v5
 ; GFX12-NEXT:    v_dual_mov_b32 v10, s5 :: v_dual_and_b32 v9, 0xffff, v9
@@ -2294,6 +2300,7 @@ define amdgpu_kernel void @constant_sextload_v16i8_to_v16i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_bfe_i32 s9, s5, 0x80010
 ; GFX12-NEXT:    s_sext_i32_i8 s5, s5
 ; GFX12-NEXT:    v_dual_mov_b32 v0, s13 :: v_dual_mov_b32 v7, s10
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v2, s7 :: v_dual_mov_b32 v11, s8
 ; GFX12-NEXT:    v_bfe_i32 v1, v1, 0, 8
 ; GFX12-NEXT:    s_ashr_i32 s2, s4, 24
@@ -2305,6 +2312,7 @@ define amdgpu_kernel void @constant_sextload_v16i8_to_v16i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_mov_b32_e32 v8, s5
 ; GFX12-NEXT:    v_mov_b32_e32 v10, s9
 ; GFX12-NEXT:    v_bfe_i32 v9, v9, 0, 8
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v12, s4
 ; GFX12-NEXT:    v_mov_b32_e32 v14, s3
 ; GFX12-NEXT:    v_bfe_i32 v13, v13, 0, 8
@@ -2753,7 +2761,7 @@ define amdgpu_kernel void @constant_zextload_v32i8_to_v32i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_and_b32 s21, s7, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s7, s7, 0x80010
 ; GFX12-NEXT:    v_dual_mov_b32 v0, s25 :: v_dual_mov_b32 v7, s16
-; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_2)
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v2, s11 :: v_dual_and_b32 v13, 0xffff, v13
 ; GFX12-NEXT:    v_dual_mov_b32 v8, s23 :: v_dual_and_b32 v1, 0xffff, v1
 ; GFX12-NEXT:    v_and_b32_e32 v5, 0xffff, v5
@@ -2767,6 +2775,7 @@ define amdgpu_kernel void @constant_zextload_v32i8_to_v32i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_bfe_u32 s6, s6, 0x80010
 ; GFX12-NEXT:    v_dual_mov_b32 v4, s24 :: v_dual_and_b32 v17, 0xffff, v14
 ; GFX12-NEXT:    v_dual_mov_b32 v6, s10 :: v_dual_and_b32 v21, 0xffff, v12
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v31, s14 :: v_dual_mov_b32 v20, s20
 ; GFX12-NEXT:    s_lshr_b32 s3, s5, 24
 ; GFX12-NEXT:    s_and_b32 s19, s5, 0xff
@@ -2776,6 +2785,7 @@ define amdgpu_kernel void @constant_zextload_v32i8_to_v32i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_and_b32 s18, s4, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s4, s4, 0x80010
 ; GFX12-NEXT:    v_dual_mov_b32 v23, s12 :: v_dual_mov_b32 v16, s19
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v18, s5 :: v_dual_mov_b32 v19, s3
 ; GFX12-NEXT:    s_clause 0x1
 ; GFX12-NEXT:    global_store_b128 v32, v[0:3], s[0:1] offset:112
@@ -3262,6 +3272,7 @@ define amdgpu_kernel void @constant_sextload_v32i8_to_v32i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_bfe_i32 s17, s7, 0x80010
 ; GFX12-NEXT:    s_sext_i32_i8 s7, s7
 ; GFX12-NEXT:    v_dual_mov_b32 v0, s25 :: v_dual_mov_b32 v7, s22
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s11
 ; GFX12-NEXT:    v_dual_mov_b32 v8, s9 :: v_dual_mov_b32 v23, s14
 ; GFX12-NEXT:    v_bfe_i32 v1, v1, 0, 8
@@ -3285,6 +3296,7 @@ define amdgpu_kernel void @constant_sextload_v32i8_to_v32i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_bfe_i32 s3, s4, 0x80010
 ; GFX12-NEXT:    s_sext_i32_i8 s4, s4
 ; GFX12-NEXT:    v_bfe_i32 v21, v12, 0, 8
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v20, s6
 ; GFX12-NEXT:    v_mov_b32_e32 v22, s15
 ; GFX12-NEXT:    v_bfe_i32 v17, v14, 0, 8
@@ -4116,12 +4128,14 @@ define amdgpu_kernel void @constant_zextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_lshrrev_b16 v1, 8, s0
 ; GFX12-NEXT:    v_dual_mov_b32 v60, 0 :: v_dual_and_b32 v5, 0xffff, v5
 ; GFX12-NEXT:    v_dual_mov_b32 v56, s50 :: v_dual_and_b32 v9, 0xffff, v9
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v58, s15
 ; GFX12-NEXT:    s_and_b32 s43, s8, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s8, s8, 0x80010
 ; GFX12-NEXT:    s_and_b32 s48, s13, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s13, s13, 0x80010
 ; GFX12-NEXT:    v_dual_mov_b32 v30, s43 :: v_dual_and_b32 v57, 0xffff, v0
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v59, s34 :: v_dual_mov_b32 v32, s8
 ; GFX12-NEXT:    s_lshr_b32 s27, s9, 24
 ; GFX12-NEXT:    s_lshr_b32 s30, s12, 24
@@ -4132,6 +4146,7 @@ define amdgpu_kernel void @constant_zextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_bfe_u32 s9, s9, 0x80010
 ; GFX12-NEXT:    s_and_b32 s47, s12, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s12, s12, 0x80010
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v36, s9 :: v_dual_and_b32 v53, 0xffff, v2
 ; GFX12-NEXT:    v_dual_mov_b32 v55, s33 :: v_dual_mov_b32 v26, s42
 ; GFX12-NEXT:    s_lshr_b32 s25, s7, 24
@@ -4139,6 +4154,7 @@ define amdgpu_kernel void @constant_zextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_dual_mov_b32 v50, s13 :: v_dual_and_b32 v23, 0xffff, v12
 ; GFX12-NEXT:    s_bfe_u32 s7, s7, 0x80010
 ; GFX12-NEXT:    v_dual_mov_b32 v34, s44 :: v_dual_and_b32 v49, 0xffff, v3
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v51, s31 :: v_dual_mov_b32 v28, s7
 ; GFX12-NEXT:    s_lshr_b32 s28, s10, 24
 ; GFX12-NEXT:    s_lshr_b32 s29, s11, 24
@@ -4148,6 +4164,7 @@ define amdgpu_kernel void @constant_zextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_and_b32 s45, s10, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s10, s10, 0x80010
 ; GFX12-NEXT:    s_and_b32 s46, s11, 0xff
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v40, s10 :: v_dual_and_b32 v45, 0xffff, v4
 ; GFX12-NEXT:    v_dual_mov_b32 v47, s30 :: v_dual_mov_b32 v22, s41
 ; GFX12-NEXT:    s_bfe_u32 s11, s11, 0x80010
@@ -4162,10 +4179,11 @@ define amdgpu_kernel void @constant_zextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    global_store_b128 v60, v[52:55], s[16:17] offset:224
 ; GFX12-NEXT:    global_store_b128 v60, v[48:51], s[16:17] offset:208
 ; GFX12-NEXT:    global_store_b128 v60, v[44:47], s[16:17] offset:192
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v44, s11 :: v_dual_mov_b32 v45, s29
 ; GFX12-NEXT:    v_mov_b32_e32 v24, s6
 ; GFX12-NEXT:    s_and_b32 s40, s5, 0xff
-; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1)
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v41, s28 :: v_dual_mov_b32 v20, s40
 ; GFX12-NEXT:    s_lshr_b32 s23, s5, 24
 ; GFX12-NEXT:    s_bfe_u32 s5, s5, 0x80010
@@ -4175,6 +4193,7 @@ define amdgpu_kernel void @constant_zextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_and_b32 s39, s4, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s4, s4, 0x80010
 ; GFX12-NEXT:    v_dual_mov_b32 v33, s26 :: v_dual_mov_b32 v16, s39
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v29, s25 :: v_dual_mov_b32 v18, s4
 ; GFX12-NEXT:    s_lshr_b32 s21, s3, 24
 ; GFX12-NEXT:    s_bfe_u32 s3, s3, 0x80010
@@ -4187,6 +4206,7 @@ define amdgpu_kernel void @constant_zextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    global_store_b128 v60, v[26:29], s[16:17] offset:112
 ; GFX12-NEXT:    global_store_b128 v60, v[22:25], s[16:17] offset:96
 ; GFX12-NEXT:    v_dual_mov_b32 v22, s5 :: v_dual_mov_b32 v23, s23
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v14, s3
 ; GFX12-NEXT:    s_lshr_b32 s20, s2, 24
 ; GFX12-NEXT:    s_and_b32 s37, s2, 0xff
@@ -4195,12 +4215,14 @@ define amdgpu_kernel void @constant_zextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_lshr_b32 s19, s1, 24
 ; GFX12-NEXT:    s_and_b32 s36, s1, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s1, s1, 0x80010
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v15, s21 :: v_dual_mov_b32 v10, s2
 ; GFX12-NEXT:    s_lshr_b32 s18, s0, 24
 ; GFX12-NEXT:    s_and_b32 s35, s0, 0xff
 ; GFX12-NEXT:    s_bfe_u32 s0, s0, 0x80010
 ; GFX12-NEXT:    v_dual_mov_b32 v11, s20 :: v_dual_mov_b32 v4, s36
 ; GFX12-NEXT:    v_dual_mov_b32 v6, s1 :: v_dual_mov_b32 v7, s19
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v0, s35 :: v_dual_mov_b32 v3, s18
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s0
 ; GFX12-NEXT:    s_clause 0x5
@@ -5061,6 +5083,7 @@ define amdgpu_kernel void @constant_sextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_ashr_i32 s47, s14, 24
 ; GFX12-NEXT:    s_bfe_i32 s48, s14, 0x80010
 ; GFX12-NEXT:    s_sext_i32_i8 s14, s14
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v59, 0 :: v_dual_mov_b32 v52, s15
 ; GFX12-NEXT:    v_lshrrev_b16 v6, 8, s11
 ; GFX12-NEXT:    s_ashr_i32 s45, s13, 24
@@ -5080,6 +5103,7 @@ define amdgpu_kernel void @constant_sextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_bfe_i32 s42, s11, 0x80010
 ; GFX12-NEXT:    s_sext_i32_i8 s11, s11
 ; GFX12-NEXT:    v_bfe_i32 v45, v3, 0, 8
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v44, s13 :: v_dual_mov_b32 v43, s43
 ; GFX12-NEXT:    v_mov_b32_e32 v46, s46
 ; GFX12-NEXT:    v_lshrrev_b16 v10, 8, s8
@@ -5110,6 +5134,7 @@ define amdgpu_kernel void @constant_sextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_bfe_i32 s36, s8, 0x80010
 ; GFX12-NEXT:    s_sext_i32_i8 s8, s8
 ; GFX12-NEXT:    v_bfe_i32 v39, v7, 0, 8
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v38, s10 :: v_dual_mov_b32 v33, s35
 ; GFX12-NEXT:    v_dual_mov_b32 v40, s40 :: v_dual_mov_b32 v29, s33
 ; GFX12-NEXT:    v_lshrrev_b16 v13, 8, s3
@@ -5138,6 +5163,7 @@ define amdgpu_kernel void @constant_sextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_sext_i32_i8 s4, s4
 ; GFX12-NEXT:    v_bfe_i32 v23, v12, 0, 8
 ; GFX12-NEXT:    v_bfe_i32 v27, v11, 0, 8
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v26, s7 :: v_dual_mov_b32 v11, s22
 ; GFX12-NEXT:    v_dual_mov_b32 v28, s34 :: v_dual_mov_b32 v7, s20
 ; GFX12-NEXT:    v_dual_mov_b32 v22, s6 :: v_dual_mov_b32 v3, s18
@@ -5163,6 +5189,7 @@ define amdgpu_kernel void @constant_sextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_bfe_i32 s21, s1, 0x80010
 ; GFX12-NEXT:    s_sext_i32_i8 s1, s1
 ; GFX12-NEXT:    v_bfe_i32 v13, v13, 0, 8
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v12, s3
 ; GFX12-NEXT:    v_mov_b32_e32 v14, s25
 ; GFX12-NEXT:    s_bfe_i32 s19, s0, 0x80010
@@ -5174,6 +5201,7 @@ define amdgpu_kernel void @constant_sextload_v64i8_to_v64i32(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_mov_b32_e32 v4, s1
 ; GFX12-NEXT:    v_mov_b32_e32 v6, s21
 ; GFX12-NEXT:    v_bfe_i32 v1, v1, 0, 8
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s0
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s19
 ; GFX12-NEXT:    s_clause 0x5
@@ -5869,7 +5897,7 @@ define amdgpu_kernel void @constant_zextload_v4i8_to_v4i64(ptr addrspace(1) %out
 ; GFX12-NEXT:    s_wait_kmcnt 0x0
 ; GFX12-NEXT:    v_lshrrev_b16 v4, 8, s2
 ; GFX12-NEXT:    s_bfe_u32 s3, s2, 0x80010
-; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_1) | instid1(VALU_DEP_2)
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v1, 0 :: v_dual_mov_b32 v0, s3
 ; GFX12-NEXT:    s_lshr_b32 s4, s2, 24
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v4
@@ -5877,6 +5905,7 @@ define amdgpu_kernel void @constant_zextload_v4i8_to_v4i64(ptr addrspace(1) %out
 ; GFX12-NEXT:    v_dual_mov_b32 v2, s4 :: v_dual_mov_b32 v3, v1
 ; GFX12-NEXT:    s_and_b32 s2, s2, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:16
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s2
 ; GFX12-NEXT:    v_mov_b32_e32 v2, v4
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1]
@@ -6027,6 +6056,7 @@ define amdgpu_kernel void @constant_sextload_v4i8_to_v4i64(ptr addrspace(1) %out
 ; GFX12-NEXT:    s_bfe_i64 s[4:5], s[4:5], 0x80000
 ; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1)
 ; GFX12-NEXT:    v_dual_mov_b32 v8, 0 :: v_dual_mov_b32 v5, s5
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v0, s2 :: v_dual_mov_b32 v7, s7
 ; GFX12-NEXT:    v_dual_mov_b32 v4, s4 :: v_dual_mov_b32 v1, s3
 ; GFX12-NEXT:    v_mov_b32_e32 v6, s6
@@ -6225,26 +6255,29 @@ define amdgpu_kernel void @constant_zextload_v8i8_to_v8i64(ptr addrspace(1) %out
 ; GFX12-NEXT:    s_load_b64 s[2:3], s[2:3], 0x0
 ; GFX12-NEXT:    s_wait_kmcnt 0x0
 ; GFX12-NEXT:    s_bfe_u32 s4, s3, 0x80010
-; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_2) | instid1(VALU_DEP_2)
+; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_3) | instid1(VALU_DEP_2)
 ; GFX12-NEXT:    v_dual_mov_b32 v1, 0 :: v_dual_mov_b32 v0, s4
 ; GFX12-NEXT:    s_lshr_b32 s5, s3, 24
 ; GFX12-NEXT:    v_lshrrev_b16 v4, 8, s2
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v2, s5 :: v_dual_mov_b32 v3, v1
 ; GFX12-NEXT:    s_lshr_b32 s4, s2, 24
 ; GFX12-NEXT:    s_bfe_u32 s5, s2, 0x80010
-; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_2)
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v4
 ; GFX12-NEXT:    v_lshrrev_b16 v5, 8, s3
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:48
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s5
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s4
 ; GFX12-NEXT:    s_and_b32 s2, s2, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:16
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s2
 ; GFX12-NEXT:    v_mov_b32_e32 v2, v4
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v5
 ; GFX12-NEXT:    s_and_b32 s2, s3, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1]
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s2
 ; GFX12-NEXT:    v_mov_b32_e32 v2, v4
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:32
@@ -6490,7 +6523,7 @@ define amdgpu_kernel void @constant_sextload_v8i8_to_v8i64(ptr addrspace(1) %out
 ; GFX12-NEXT:    v_bfe_i32 v14, v7, 0, 8
 ; GFX12-NEXT:    s_bfe_i64 s[12:13], s[2:3], 0x80000
 ; GFX12-NEXT:    s_ashr_i64 s[2:3], s[2:3], 56
-; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1)
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v16, 0 :: v_dual_mov_b32 v3, s3
 ; GFX12-NEXT:    s_bfe_i64 s[4:5], s[4:5], 0x80000
 ; GFX12-NEXT:    v_dual_mov_b32 v0, s6 :: v_dual_mov_b32 v9, s9
@@ -6831,47 +6864,55 @@ define amdgpu_kernel void @constant_zextload_v16i8_to_v16i64(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_load_b128 s[4:7], s[2:3], 0x0
 ; GFX12-NEXT:    s_wait_kmcnt 0x0
 ; GFX12-NEXT:    s_bfe_u32 s2, s7, 0x80010
-; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_2) | instid1(VALU_DEP_1)
+; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_3) | instid1(VALU_DEP_1)
 ; GFX12-NEXT:    v_dual_mov_b32 v1, 0 :: v_dual_mov_b32 v0, s2
 ; GFX12-NEXT:    s_lshr_b32 s3, s7, 24
 ; GFX12-NEXT:    s_lshr_b32 s2, s5, 24
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v2, s3 :: v_dual_mov_b32 v3, v1
 ; GFX12-NEXT:    s_bfe_u32 s3, s5, 0x80010
 ; GFX12-NEXT:    v_lshrrev_b16 v4, 8, s6
 ; GFX12-NEXT:    v_lshrrev_b16 v5, 8, s7
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:112
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s3
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s2
 ; GFX12-NEXT:    s_lshr_b32 s2, s6, 24
 ; GFX12-NEXT:    s_bfe_u32 s3, s6, 0x80010
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v4
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:48
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s3
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s2
 ; GFX12-NEXT:    s_lshr_b32 s2, s4, 24
 ; GFX12-NEXT:    s_bfe_u32 s3, s4, 0x80010
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:80
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s3
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s2
 ; GFX12-NEXT:    s_and_b32 s2, s6, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:16
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s2
 ; GFX12-NEXT:    v_mov_b32_e32 v2, v4
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v5
 ; GFX12-NEXT:    v_lshrrev_b16 v5, 8, s5
 ; GFX12-NEXT:    s_and_b32 s2, s7, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:64
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s2
 ; GFX12-NEXT:    v_mov_b32_e32 v2, v4
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v5
 ; GFX12-NEXT:    v_lshrrev_b16 v5, 8, s4
 ; GFX12-NEXT:    s_and_b32 s2, s5, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:96
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s2
 ; GFX12-NEXT:    v_mov_b32_e32 v2, v4
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v5
 ; GFX12-NEXT:    s_and_b32 s2, s4, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1] offset:32
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s2
 ; GFX12-NEXT:    v_mov_b32_e32 v2, v4
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[0:1]
@@ -7303,6 +7344,7 @@ define amdgpu_kernel void @constant_sextload_v16i8_to_v16i64(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_ashr_i64 s[4:5], s[4:5], 56
 ; GFX12-NEXT:    s_bfe_i64 s[20:21], s[20:21], 0x80000
 ; GFX12-NEXT:    s_bfe_i64 s[18:19], s[18:19], 0x80000
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v30, 0 :: v_dual_mov_b32 v3, s7
 ; GFX12-NEXT:    s_bfe_i64 s[14:15], s[14:15], 0x80000
 ; GFX12-NEXT:    v_dual_mov_b32 v2, s6 :: v_dual_mov_b32 v7, s5
@@ -7939,48 +7981,56 @@ define amdgpu_kernel void @constant_zextload_v32i8_to_v32i64(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_load_b256 s[0:7], s[10:11], 0x0
 ; GFX12-NEXT:    s_wait_kmcnt 0x0
 ; GFX12-NEXT:    s_bfe_u32 s10, s7, 0x80010
-; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_2) | instid1(VALU_DEP_1)
+; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1) | instskip(SKIP_3) | instid1(VALU_DEP_1)
 ; GFX12-NEXT:    v_dual_mov_b32 v1, 0 :: v_dual_mov_b32 v0, s10
 ; GFX12-NEXT:    s_lshr_b32 s11, s7, 24
 ; GFX12-NEXT:    s_lshr_b32 s10, s5, 24
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v2, s11 :: v_dual_mov_b32 v3, v1
 ; GFX12-NEXT:    s_bfe_u32 s11, s5, 0x80010
 ; GFX12-NEXT:    v_lshrrev_b16 v4, 8, s7
 ; GFX12-NEXT:    v_lshrrev_b16 v5, 8, s6
 ; GFX12-NEXT:    s_and_b32 s7, s7, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:240
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s11
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s10
 ; GFX12-NEXT:    s_lshr_b32 s10, s3, 24
 ; GFX12-NEXT:    s_bfe_u32 s11, s3, 0x80010
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v4
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:176
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s11
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s10
 ; GFX12-NEXT:    s_lshr_b32 s10, s1, 24
 ; GFX12-NEXT:    s_bfe_u32 s11, s1, 0x80010
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:112
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s11
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s10
 ; GFX12-NEXT:    s_lshr_b32 s10, s6, 24
 ; GFX12-NEXT:    s_bfe_u32 s11, s6, 0x80010
 ; GFX12-NEXT:    s_and_b32 s6, s6, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:48
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s11
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s10
 ; GFX12-NEXT:    s_lshr_b32 s10, s4, 24
 ; GFX12-NEXT:    s_bfe_u32 s11, s4, 0x80010
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:208
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s11
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s10
 ; GFX12-NEXT:    s_lshr_b32 s10, s2, 24
 ; GFX12-NEXT:    s_bfe_u32 s11, s2, 0x80010
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:144
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s11
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s10
 ; GFX12-NEXT:    s_lshr_b32 s10, s0, 24
 ; GFX12-NEXT:    s_bfe_u32 s11, s0, 0x80010
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:80
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s11
 ; GFX12-NEXT:    v_mov_b32_e32 v2, s10
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:16
@@ -7996,6 +8046,7 @@ define amdgpu_kernel void @constant_zextload_v32i8_to_v32i64(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_lshrrev_b16 v5, 8, s4
 ; GFX12-NEXT:    s_and_b32 s4, s4, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:192
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s5
 ; GFX12-NEXT:    v_mov_b32_e32 v2, v4
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v5
@@ -8008,6 +8059,7 @@ define amdgpu_kernel void @constant_zextload_v32i8_to_v32i64(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_lshrrev_b16 v5, 8, s2
 ; GFX12-NEXT:    s_and_b32 s2, s2, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:128
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s3
 ; GFX12-NEXT:    v_mov_b32_e32 v2, v4
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v5
@@ -8020,6 +8072,7 @@ define amdgpu_kernel void @constant_zextload_v32i8_to_v32i64(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_lshrrev_b16 v5, 8, s0
 ; GFX12-NEXT:    s_and_b32 s0, s0, 0xff
 ; GFX12-NEXT:    global_store_b128 v1, v[0:3], s[8:9] offset:64
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v0, s1
 ; GFX12-NEXT:    v_mov_b32_e32 v2, v4
 ; GFX12-NEXT:    v_and_b32_e32 v4, 0xffff, v5
@@ -8850,6 +8903,7 @@ define amdgpu_kernel void @constant_sextload_v32i8_to_v32i64(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_bfe_i64 s[30:31], s[30:31], 0x80000
 ; GFX12-NEXT:    s_bfe_i64 s[28:29], s[28:29], 0x80000
 ; GFX12-NEXT:    s_bfe_i64 s[22:23], s[22:23], 0x80000
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v32, s20 :: v_dual_mov_b32 v35, s7
 ; GFX12-NEXT:    v_dual_mov_b32 v34, s6 :: v_dual_mov_b32 v37, s23
 ; GFX12-NEXT:    v_dual_mov_b32 v38, s24 :: v_dual_mov_b32 v41, s27
@@ -8869,6 +8923,7 @@ define amdgpu_kernel void @constant_sextload_v32i8_to_v32i64(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_dual_mov_b32 v24, s16 :: v_dual_mov_b32 v21, s5
 ; GFX12-NEXT:    v_dual_mov_b32 v20, s4 :: v_dual_mov_b32 v17, s15
 ; GFX12-NEXT:    v_dual_mov_b32 v12, s2 :: v_dual_mov_b32 v9, s13
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v8, s12 :: v_dual_mov_b32 v5, s1
 ; GFX12-NEXT:    s_bfe_i64 s[34:35], s[34:35], 0x80000
 ; GFX12-NEXT:    v_dual_mov_b32 v36, s22 :: v_dual_mov_b32 v39, s25
@@ -9611,8 +9666,9 @@ define amdgpu_kernel void @constant_zextload_v4i8_to_v4i16(ptr addrspace(1) %out
 ; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_3) | instskip(NEXT) | instid1(VALU_DEP_3)
 ; GFX12-NEXT:    v_and_b32_e32 v0, 0xffff, v0
 ; GFX12-NEXT:    v_and_b32_e32 v1, 0xffff, v1
-; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(VALU_DEP_2)
+; GFX12-NEXT:    s_delay_alu instid0(VALU_DEP_2) | instskip(SKIP_1) | instid1(VALU_DEP_2)
 ; GFX12-NEXT:    v_lshl_or_b32 v0, v2, 16, v0
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_lshl_or_b32 v1, s2, 16, v1
 ; GFX12-NEXT:    global_store_b64 v3, v[0:1], s[0:1]
 ; GFX12-NEXT:    s_nop 0
@@ -9759,10 +9815,11 @@ define amdgpu_kernel void @constant_sextload_v4i8_to_v4i16(ptr addrspace(1) %out
 ; GFX12-NEXT:    v_and_b32_e64 v1, 0xffff, s4
 ; GFX12-NEXT:    s_ashr_i32 s2, s2, 24
 ; GFX12-NEXT:    s_bfe_i32 s3, s3, 0x80000
-; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1)
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    s_pack_ll_b32_b16 s2, s3, s2
 ; GFX12-NEXT:    v_mov_b32_e32 v2, 0
 ; GFX12-NEXT:    v_lshl_or_b32 v0, v0, 16, v1
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v1, s2
 ; GFX12-NEXT:    global_store_b64 v2, v[0:1], s[0:1]
 ; GFX12-NEXT:    s_nop 0
@@ -9961,6 +10018,7 @@ define amdgpu_kernel void @constant_zextload_v8i8_to_v8i16(ptr addrspace(1) %out
 ; GFX12-NEXT:    s_lshr_b32 s2, s3, 24
 ; GFX12-NEXT:    v_lshl_or_b32 v0, v6, 16, v0
 ; GFX12-NEXT:    v_lshl_or_b32 v2, v1, 16, v2
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_lshl_or_b32 v3, s2, 16, v3
 ; GFX12-NEXT:    v_lshl_or_b32 v1, s4, 16, v5
 ; GFX12-NEXT:    global_store_b128 v4, v[0:3], s[0:1]
@@ -10187,8 +10245,10 @@ define amdgpu_kernel void @constant_sextload_v8i8_to_v8i16(ptr addrspace(1) %out
 ; GFX12-NEXT:    s_ashr_i32 s2, s2, 24
 ; GFX12-NEXT:    s_bfe_i32 s3, s6, 0x80000
 ; GFX12-NEXT:    s_bfe_i32 s5, s7, 0x80000
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    s_pack_ll_b32_b16 s2, s3, s2
 ; GFX12-NEXT:    s_pack_ll_b32_b16 s3, s5, s4
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v4, 0 :: v_dual_mov_b32 v1, s2
 ; GFX12-NEXT:    v_lshl_or_b32 v0, v0, 16, v3
 ; GFX12-NEXT:    v_lshl_or_b32 v2, v2, 16, v5
@@ -10537,6 +10597,7 @@ define amdgpu_kernel void @constant_zextload_v16i8_to_v16i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_lshl_or_b32 v0, v0, 16, v5
 ; GFX12-NEXT:    v_lshl_or_b32 v6, v3, 16, v6
 ; GFX12-NEXT:    v_lshl_or_b32 v4, v1, 16, v7
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_lshl_or_b32 v7, s8, 16, v11
 ; GFX12-NEXT:    v_lshl_or_b32 v5, s2, 16, v12
 ; GFX12-NEXT:    v_lshl_or_b32 v3, s12, 16, v9
@@ -10926,6 +10987,7 @@ define amdgpu_kernel void @constant_sextload_v16i8_to_v16i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_ashrrev_i16 v0, 8, s5
 ; GFX12-NEXT:    s_bfe_i32 s5, s5, 0x80000
 ; GFX12-NEXT:    s_bfe_i32 s12, s7, 0x80000
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    s_ashr_i64 s[2:3], s[6:7], 56
 ; GFX12-NEXT:    v_and_b32_e64 v12, 0xffff, s6
 ; GFX12-NEXT:    s_bfe_i32 s6, s8, 0x80000
@@ -10937,14 +10999,16 @@ define amdgpu_kernel void @constant_sextload_v16i8_to_v16i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_and_b32_e64 v4, 0xffff, s5
 ; GFX12-NEXT:    v_and_b32_e64 v11, 0xffff, s12
 ; GFX12-NEXT:    v_ashrrev_i16 v13, 8, s8
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_and_b32_e64 v16, 0xffff, s6
 ; GFX12-NEXT:    v_ashrrev_i16 v9, 8, s11
 ; GFX12-NEXT:    v_ashrrev_i16 v10, 8, s10
 ; GFX12-NEXT:    s_bfe_i32 s5, s9, 0x80000
 ; GFX12-NEXT:    v_and_b32_e64 v14, 0xffff, s3
 ; GFX12-NEXT:    v_and_b32_e64 v15, 0xffff, s4
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    s_pack_ll_b32_b16 s2, s5, s2
-; GFX12-NEXT:    s_delay_alu instid0(SALU_CYCLE_1)
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_dual_mov_b32 v8, 0 :: v_dual_mov_b32 v3, s2
 ; GFX12-NEXT:    v_lshl_or_b32 v6, v0, 16, v4
 ; GFX12-NEXT:    v_lshl_or_b32 v4, v1, 16, v7
@@ -11566,6 +11630,7 @@ define amdgpu_kernel void @constant_zextload_v32i8_to_v32i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_lshl_or_b32 v2, v2, 16, v6
 ; GFX12-NEXT:    v_lshl_or_b32 v6, v4, 16, v10
 ; GFX12-NEXT:    v_lshl_or_b32 v4, v3, 16, v11
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_lshl_or_b32 v3, s24, 16, v14
 ; GFX12-NEXT:    v_lshl_or_b32 v10, v9, 16, v12
 ; GFX12-NEXT:    v_lshl_or_b32 v8, v8, 16, v13
@@ -11580,6 +11645,7 @@ define amdgpu_kernel void @constant_zextload_v32i8_to_v32i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_lshr_b32 s16, s5, 24
 ; GFX12-NEXT:    v_lshrrev_b16 v1, 8, s6
 ; GFX12-NEXT:    v_lshrrev_b16 v5, 8, s7
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_lshl_or_b32 v11, s16, 16, v17
 ; GFX12-NEXT:    v_and_b32_e32 v9, 0xffff, v9
 ; GFX12-NEXT:    v_and_b32_e32 v12, 0xffff, v12
@@ -11593,11 +11659,13 @@ define amdgpu_kernel void @constant_zextload_v32i8_to_v32i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_lshr_b32 s18, s2, 24
 ; GFX12-NEXT:    v_lshl_or_b32 v14, v5, 16, v9
 ; GFX12-NEXT:    v_lshl_or_b32 v12, v1, 16, v12
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_lshl_or_b32 v15, s12, 16, v13
 ; GFX12-NEXT:    v_lshl_or_b32 v13, s10, 16, v17
 ; GFX12-NEXT:    s_lshr_b32 s22, s0, 24
 ; GFX12-NEXT:    v_lshl_or_b32 v9, s14, 16, v19
 ; GFX12-NEXT:    v_lshl_or_b32 v5, s18, 16, v18
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_lshl_or_b32 v1, s22, 16, v20
 ; GFX12-NEXT:    s_clause 0x3
 ; GFX12-NEXT:    global_store_b128 v16, v[12:15], s[8:9] offset:48
@@ -12316,6 +12384,7 @@ define amdgpu_kernel void @constant_sextload_v32i8_to_v32i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_ashrrev_i16 v1, 8, s0
 ; GFX12-NEXT:    s_bfe_i32 s19, s0, 0x80000
 ; GFX12-NEXT:    v_ashrrev_i16 v5, 8, s5
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    s_ashr_i64 s[0:1], s[4:5], 56
 ; GFX12-NEXT:    v_and_b32_e64 v10, 0xffff, s2
 ; GFX12-NEXT:    v_and_b32_e64 v12, 0xffff, s20
@@ -12323,6 +12392,7 @@ define amdgpu_kernel void @constant_sextload_v32i8_to_v32i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_ashrrev_i16 v3, 8, s3
 ; GFX12-NEXT:    s_bfe_i32 s3, s3, 0x80000
 ; GFX12-NEXT:    s_bfe_i32 s2, s15, 0x80000
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_and_b32_e64 v14, 0xffff, s1
 ; GFX12-NEXT:    s_bfe_i32 s1, s12, 0x80000
 ; GFX12-NEXT:    v_and_b32_e64 v2, 0xffff, s18
@@ -12333,9 +12403,11 @@ define amdgpu_kernel void @constant_sextload_v32i8_to_v32i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_and_b32_e64 v15, 0xffff, s2
 ; GFX12-NEXT:    v_lshl_or_b32 v4, v4, 16, v10
 ; GFX12-NEXT:    v_lshl_or_b32 v10, v5, 16, v12
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_and_b32_e64 v5, 0xffff, s1
 ; GFX12-NEXT:    s_bfe_i32 s1, s7, 0x80000
 ; GFX12-NEXT:    s_lshr_b32 s11, s7, 16
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_and_b32_e64 v12, 0xffff, s1
 ; GFX12-NEXT:    s_bfe_i32 s1, s6, 0x80000
 ; GFX12-NEXT:    s_lshr_b32 s10, s6, 16
@@ -12344,9 +12416,11 @@ define amdgpu_kernel void @constant_sextload_v32i8_to_v32i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_lshl_or_b32 v6, v3, 16, v8
 ; GFX12-NEXT:    v_lshl_or_b32 v8, v7, 16, v13
 ; GFX12-NEXT:    v_lshl_or_b32 v7, v11, 16, v15
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_and_b32_e64 v15, 0xffff, s1
 ; GFX12-NEXT:    s_bfe_i32 s1, s11, 0x80000
 ; GFX12-NEXT:    s_lshr_b32 s13, s5, 16
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_and_b32_e64 v22, 0xffff, s1
 ; GFX12-NEXT:    s_bfe_i32 s1, s10, 0x80000
 ; GFX12-NEXT:    v_ashrrev_i16 v9, 8, s17
@@ -12355,6 +12429,7 @@ define amdgpu_kernel void @constant_sextload_v32i8_to_v32i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    v_ashrrev_i16 v13, 8, s6
 ; GFX12-NEXT:    v_ashrrev_i16 v21, 8, s11
 ; GFX12-NEXT:    v_ashrrev_i16 v23, 8, s10
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_and_b32_e64 v24, 0xffff, s1
 ; GFX12-NEXT:    s_bfe_i32 s5, s16, 0x80000
 ; GFX12-NEXT:    v_ashrrev_i16 v1, 8, s12
@@ -12362,11 +12437,13 @@ define amdgpu_kernel void @constant_sextload_v32i8_to_v32i16(ptr addrspace(1) %o
 ; GFX12-NEXT:    s_bfe_i32 s4, s13, 0x80000
 ; GFX12-NEXT:    v_and_b32_e64 v20, 0xffff, s3
 ; GFX12-NEXT:    v_ashrrev_i16 v17, 8, s16
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_and_b32_e64 v19, 0xffff, s5
 ; GFX12-NEXT:    s_pack_ll_b32_b16 s0, s4, s0
 ; GFX12-NEXT:    v_mov_b32_e32 v16, 0
 ; GFX12-NEXT:    v_lshl_or_b32 v3, v9, 16, v14
 ; GFX12-NEXT:    v_lshl_or_b32 v14, v11, 16, v12
+; GFX12-NEXT:    s_wait_alu 0xfffe
 ; GFX12-NEXT:    v_mov_b32_e32 v11, s0
 ; GFX12-NEXT:    v_lshl_or_b32 v12, v13, 16, v15
 ; GFX12-NEXT:    v_lshl_or_b32 v15, v21, 16, v22

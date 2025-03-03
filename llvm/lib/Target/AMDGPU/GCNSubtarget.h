@@ -1275,6 +1275,8 @@ public:
 
   bool hasVALUMaskWriteHazard() const { return getGeneration() == GFX11; }
 
+  bool hasVALUReadSGPRHazard() const { return getGeneration() == GFX12; }
+
   /// Return if operations acting on VGPR tuples require even alignment.
   bool needsAlignedVGPRs() const { return GFX90AInsts; }
 
@@ -1322,6 +1324,8 @@ public:
   bool hasPseudoScalarTrans() const { return HasPseudoScalarTrans; }
 
   bool hasRestrictedSOffset() const { return HasRestrictedSOffset; }
+
+  bool hasRequiredExportPriority() const { return HasRequiredExportPriority; }
 
   /// \returns true if the target uses LOADcnt/SAMPLEcnt/BVHcnt, DScnt/KMcnt
   /// and STOREcnt rather than VMcnt, LGKMcnt and VScnt respectively.
