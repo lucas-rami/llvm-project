@@ -73,6 +73,7 @@ option(COMGR_BUILD_SHARED_LIBS "Build the shared library"
 set(SOURCES
   src/comgr-cache.cpp
   src/comgr-cache-command.cpp
+  src/comgr-cache-bundler-command.cpp
   src/comgr-compiler.cpp
   src/comgr.cpp
   src/comgr-device-libs.cpp
@@ -83,6 +84,7 @@ set(SOURCES
   src/comgr-metadata.cpp
   src/comgr-objdump.cpp
   src/comgr-signal.cpp
+  src/comgr-spirv-command.cpp
   src/comgr-symbol.cpp
   src/comgr-symbolizer.cpp
   src/time-stat/time-stat.cpp)
