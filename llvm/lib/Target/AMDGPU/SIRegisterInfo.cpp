@@ -38,6 +38,30 @@ static cl::opt<bool> EnableSpillSGPRToVGPR(
 std::array<std::vector<int16_t>, 16> SIRegisterInfo::RegSplitParts;
 std::array<std::array<uint16_t, 32>, 9> SIRegisterInfo::SubRegFromChannelTable;
 
+std::array<unsigned, 23> SIRegisterInfo::SpecialPurposeRegisters = {
+    // EXEC_LO and EXEC_HI could be allocated and used as regular register, but
+    // this seems likely to result in bugs, so I'm marking them as reserved.
+    AMDGPU::EXEC, AMDGPU::FLAT_SCR,
+    // M0 has to be reserved so that llvm accepts it as a live-in into a block.
+    AMDGPU::M0,
+    // Reserve src_vccz, src_execz, src_scc.
+    AMDGPU::SRC_VCCZ, AMDGPU::SRC_EXECZ, AMDGPU::SRC_SCC,
+    // Reserve the memory aperture registers
+    AMDGPU::SRC_SHARED_LIMIT, AMDGPU::SRC_PRIVATE_BASE,
+    AMDGPU::SRC_PRIVATE_LIMIT,
+    // Reserve src_pops_exiting_wave_id - support is not implemented in Codegen.
+    AMDGPU::SRC_POPS_EXITING_WAVE_ID,
+    // Reserve xnack_mask registers - support is not implemented in Codegen.
+    AMDGPU::XNACK_MASK,
+    // Reserve lds_direct register - support is not implemented in Codegen.
+    AMDGPU::LDS_DIRECT,
+    // Reserve Trap Handler registers - support is not implemented in Codegen.
+    AMDGPU::TBA, AMDGPU::TMA, AMDGPU::TTMP0_TTMP1, AMDGPU::TTMP2_TTMP3,
+    AMDGPU::TTMP4_TTMP5, AMDGPU::TTMP6_TTMP7, AMDGPU::TTMP8_TTMP9,
+    AMDGPU::TTMP10_TTMP11, AMDGPU::TTMP12_TTMP13, AMDGPU::TTMP14_TTMP15,
+    // Reserve null register - it shall never be allocated
+    AMDGPU::SGPR_NULL64};
+
 // Map numbers of DWORDs to indexes in SubRegFromChannelTable.
 // Valid indexes are shifted 1, such that a 0 mapping means unsupported.
 // e.g. for 8 DWORDs (256-bit), SubRegFromChannelTableWidthMap[8] = 8,
@@ -607,49 +631,8 @@ BitVector SIRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   const SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
 
   // Reserve special purpose registers.
-  //
-  // EXEC_LO and EXEC_HI could be allocated and used as regular register, but
-  // this seems likely to result in bugs, so I'm marking them as reserved.
-  reserveRegisterTuples(Reserved, AMDGPU::EXEC);
-  reserveRegisterTuples(Reserved, AMDGPU::FLAT_SCR);
-
-  // M0 has to be reserved so that llvm accepts it as a live-in into a block.
-  reserveRegisterTuples(Reserved, AMDGPU::M0);
-
-  // Reserve src_vccz, src_execz, src_scc.
-  reserveRegisterTuples(Reserved, AMDGPU::SRC_VCCZ);
-  reserveRegisterTuples(Reserved, AMDGPU::SRC_EXECZ);
-  reserveRegisterTuples(Reserved, AMDGPU::SRC_SCC);
-
-  // Reserve the memory aperture registers
-  reserveRegisterTuples(Reserved, AMDGPU::SRC_SHARED_BASE);
-  reserveRegisterTuples(Reserved, AMDGPU::SRC_SHARED_LIMIT);
-  reserveRegisterTuples(Reserved, AMDGPU::SRC_PRIVATE_BASE);
-  reserveRegisterTuples(Reserved, AMDGPU::SRC_PRIVATE_LIMIT);
-
-  // Reserve src_pops_exiting_wave_id - support is not implemented in Codegen.
-  reserveRegisterTuples(Reserved, AMDGPU::SRC_POPS_EXITING_WAVE_ID);
-
-  // Reserve xnack_mask registers - support is not implemented in Codegen.
-  reserveRegisterTuples(Reserved, AMDGPU::XNACK_MASK);
-
-  // Reserve lds_direct register - support is not implemented in Codegen.
-  reserveRegisterTuples(Reserved, AMDGPU::LDS_DIRECT);
-
-  // Reserve Trap Handler registers - support is not implemented in Codegen.
-  reserveRegisterTuples(Reserved, AMDGPU::TBA);
-  reserveRegisterTuples(Reserved, AMDGPU::TMA);
-  reserveRegisterTuples(Reserved, AMDGPU::TTMP0_TTMP1);
-  reserveRegisterTuples(Reserved, AMDGPU::TTMP2_TTMP3);
-  reserveRegisterTuples(Reserved, AMDGPU::TTMP4_TTMP5);
-  reserveRegisterTuples(Reserved, AMDGPU::TTMP6_TTMP7);
-  reserveRegisterTuples(Reserved, AMDGPU::TTMP8_TTMP9);
-  reserveRegisterTuples(Reserved, AMDGPU::TTMP10_TTMP11);
-  reserveRegisterTuples(Reserved, AMDGPU::TTMP12_TTMP13);
-  reserveRegisterTuples(Reserved, AMDGPU::TTMP14_TTMP15);
-
-  // Reserve null register - it shall never be allocated
-  reserveRegisterTuples(Reserved, AMDGPU::SGPR_NULL64);
+  for (unsigned Reg : SpecialPurposeRegisters)
+    reserveRegisterTuples(Reserved, Reg);
 
   // Reserve SGPRs.
   //

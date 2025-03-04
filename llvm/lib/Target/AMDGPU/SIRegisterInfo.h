@@ -64,6 +64,8 @@ public:
     bool hasReg() { return VGPR != 0; }
   };
 
+  static std::array<unsigned, 23> SpecialPurposeRegisters;
+
   /// \returns the sub reg enum value for the given \p Channel
   /// (e.g. getSubRegFromChannel(0) -> AMDGPU::sub0)
   static unsigned getSubRegFromChannel(unsigned Channel, unsigned NumRegs = 1);

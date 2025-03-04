@@ -653,9 +653,21 @@ void SIMachineFunctionInfo::limitWavesPerEU(MachineFunction &MF) {
   enum { SGPR = 0, VGPR = 1, AGPR = 2, NUM_REG_CATS = 3 };
 
   unsigned MaxCounts[NUM_REG_CATS] = {};
+  unsigned StrictWMVGPRCount = 0;
   auto SetMax = [&](unsigned I, unsigned NumRegs) -> void {
-    MaxCounts[I] = std::max(MaxCounts[I], NumRegs);
+    // In the presence of a strict WQM/WWM region, we also have to make sure
+    // the region will be able to scavenge enough registers for VGPR defs
+    // inside the region. This calculation is conservative, but cheap; it
+    // assumes that all VGPRs live at some point in the MBB before the
+    // strict WQM/WWM region are still live at the beginning of the region.
+    MaxCounts[I] =
+        std::max(MaxCounts[I], NumRegs + (I == VGPR ? StrictWMVGPRCount : 0));
   };
+
+  // Collect special-purpose registers in a set for constant-time lookup.
+  DenseSet<unsigned> SpecialRegs;
+  for (unsigned Reg : SIRegisterInfo::SpecialPurposeRegisters)
+    SpecialRegs.insert(Reg);
 
   for (MachineBasicBlock &MBB : MF) {
     // Compute required register usage induced by block live-ins; these will
@@ -678,8 +690,8 @@ void SIMachineFunctionInfo::limitWavesPerEU(MachineFunction &MF) {
                       << LiveInCounts[SGPR] << "," << LiveInCounts[VGPR] << ","
                       << LiveInCounts[AGPR] << "]\n");
 
-    bool InWWM = false;
-    unsigned StrictWMVGPRCount = 0;
+    bool InStrictWholeMode = false;
+    StrictWMVGPRCount = 0;
     // GCNDownwardRPTracker RP();
     // MachineBasicBlock::iterator NonDbgMI = MBB.getFirstNonDebugInstr();
     // RP.reset(NonDbgMI, &RPLiveIns);
@@ -688,12 +700,14 @@ void SIMachineFunctionInfo::limitWavesPerEU(MachineFunction &MF) {
       if (MI.isDebugInstr())
         continue;
 
-      if (MI.getOpcode() == AMDGPU::ENTER_STRICT_WWM ||
-          MI.getOpcode() == AMDGPU::ENTER_STRICT_WQM) {
-        InWWM = true;
-      } else if (MI.getOpcode() == AMDGPU::EXIT_STRICT_WWM ||
-                 MI.getOpcode() == AMDGPU::EXIT_STRICT_WQM) {
-        InWWM = false;
+      // Track WQM/WWM regions.
+      unsigned Op = MI.getOpcode();
+      if (Op == AMDGPU::ENTER_STRICT_WWM || Op == AMDGPU::STRICT_WWM ||
+          Op == AMDGPU::STRICT_WQM || Op == AMDGPU::ENTER_STRICT_WQM) {
+        InStrictWholeMode = true;
+      } else if (Op == AMDGPU::EXIT_STRICT_WWM ||
+                 Op == AMDGPU::EXIT_STRICT_WQM) {
+        InStrictWholeMode = false;
       }
 
       // Analyze each non-debug MI's register usage; we must leave enough
@@ -704,7 +718,7 @@ void SIMachineFunctionInfo::limitWavesPerEU(MachineFunction &MF) {
                Physical[NUM_REG_CATS] = {};
       LLVM_DEBUG(dbgs() << MI);
       for (MachineOperand &MO : MI.operands()) {
-        if (!MO.isReg())
+        if (!MO.isReg() || SpecialRegs.contains(MO.getReg()))
           continue;
         Register Reg = MO.getReg();
 
@@ -744,13 +758,14 @@ void SIMachineFunctionInfo::limitWavesPerEU(MachineFunction &MF) {
             DefCounts[I] += NumRegs;
         };
         if (TRI->isSGPRClass(RC)) {
-          if (Reg == AMDGPU::EXEC)
-            continue;
           CountRegs(SGPR);
         } else if (TRI->isVGPRClass(RC)) {
           CountRegs(VGPR);
-          if (InWWM && MO.isDef())
+          if (InStrictWholeMode) {
+            LLVM_DEBUG(dbgs()
+                       << "  Increasing WQM/WWM count by " << NumRegs << "\n");
             StrictWMVGPRCount += NumRegs;
+          }
         } else if (TRI->isAGPRClass(RC)) {
           CountRegs(AGPR);
         }
@@ -763,13 +778,7 @@ void SIMachineFunctionInfo::limitWavesPerEU(MachineFunction &MF) {
             std::max(ReadCounts[I], DefCounts[I]) + EarlyClobberRWCounts[I];
         // Usage of a high-index physical register forces allocation of all
         // registers with lower indices in the same class.
-        unsigned MaxUsage = std::max(MaxRegCount, Physical[I]);
-        // In the presence of a strict WQM/WWM region, we also have to make sure
-        // the region will be able to scavenge enough registers for VGPR defs
-        // inside the region. This calculation is conservative, but cheap; it
-        // assumes that all VGPRs live at some point in the MBB before the
-        // strict WQM/WWM region are still live at the beginning of the region.
-        return MaxUsage + (I == VGPR ? StrictWMVGPRCount : 0);
+        return std::max(MaxRegCount, Physical[I]);
       };
 
       LLVM_DEBUG(dbgs() << "  [SGPRs, VGPRs, AGPRs] = [" << GetRegUsage(SGPR)
@@ -803,11 +812,9 @@ void SIMachineFunctionInfo::limitWavesPerEU(MachineFunction &MF) {
   MaxCounts[VGPR] += ST.getReservedNumVGPRs(MF);
   MaxCounts[AGPR] += ST.getReservedNumAGPRs(MF);
 
-  LLVM_DEBUG(dbgs() << "Max. [SGPRs, VGPRs, AGPRs] = [" << MaxCounts[SGPR]
-                    << "," << MaxCounts[VGPR] << "," << MaxCounts[AGPR]
-                    << "]\n");
-  LLVM_DEBUG(dbgs() << "Waves/EU = [" << Info->getMinWavesPerEU() << ","
-                    << Info->getMaxWavesPerEU() << "]\n");
+  LLVM_DEBUG(dbgs() << "Max. usage  [SGPRs, VGPRs, AGPRs] = ["
+                    << MaxCounts[SGPR] << "," << MaxCounts[VGPR] << ","
+                    << MaxCounts[AGPR] << "]\n");
   unsigned MinOcc = std::min(Info->getMaxWavesPerEU(),
                              ST.getOccupancyWithNumSGPRs(MaxCounts[SGPR]));
   if (ST.hasGFX90AInsts()) {
@@ -816,6 +823,11 @@ void SIMachineFunctionInfo::limitWavesPerEU(MachineFunction &MF) {
     MinOcc = std::min(MinOcc, ST.getOccupancyWithNumVGPRs(
                                   std::max(MaxCounts[VGPR], MaxCounts[AGPR])));
   }
+  LLVM_DEBUG(dbgs() << "Max. usable [SGPRs, VGPRs, AGPRs] = ["
+                    << ST.getMaxNumSGPRs(MinOcc, true) << ","
+                    << ST.getMaxNumVGPRs(MinOcc) << ","
+                    << "?"
+                    << "]\n");
   Info->limitWavesPerEU(MF, MinOcc);
   LLVM_DEBUG(dbgs() << "  Limiting occupancy to " << MinOcc << "\n");
 }
