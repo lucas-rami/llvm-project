@@ -1490,6 +1490,8 @@ public:
 
   unsigned getReservedNumVGPRs(const MachineFunction &MF) const;
 
+  unsigned getReservedNumAGPRs(const MachineFunction &MF) const;
+
   /// \returns max num SGPRs. This is the common utility
   /// function called by MachineFunction and Function
   /// variants of getMaxNumSGPRs.

@@ -584,10 +584,10 @@ public:
   }
 
   /// On gfx908, in order to guarantee copying between AGPRs, we need a scratch
-  /// VGPR available at all times. If needed, reserve highest available VGPR
-  /// w.r.t. waves/EU range. After RA, shift it to the lowest available unused
-  /// VGPR if one exists.
-  void setVGPRForAGPRCopyIfNeeded(const GCNSubtarget &ST);
+  /// VGPR available at all times. Reserve highest available VGPR w.r.t.
+  /// waves/EU range. After RA, shift it to the lowest available unused VGPR if
+  /// one exists.
+  void setVGPRForAGPRCopy(const GCNSubtarget &ST);
 
   void setVGPRForAGPRCopy(Register NewVGPRForAGPRCopy) {
     VGPRForAGPRCopy = NewVGPRForAGPRCopy;
@@ -1089,12 +1089,16 @@ public:
     return WavesPerEU;
   }
 
+  void limitWavesPerEU(MachineFunction &MF);
+
   void limitWavesPerEU(const MachineFunction &MF, unsigned Limit) {
     if (WavesPerEU.second > Limit) {
       WavesPerEU.second = Limit;
       WavesPerEU.first = std::min(WavesPerEU.first, WavesPerEU.second);
       setSGPRForEXECCopy(MF);
-      setVGPRForAGPRCopyIfNeeded(MF.getSubtarget<GCNSubtarget>());
+      const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
+      if (ST.hasVGPRForAGPRCopy())
+        setVGPRForAGPRCopy(ST);
       limitOccupancy(Limit);
     }
   }

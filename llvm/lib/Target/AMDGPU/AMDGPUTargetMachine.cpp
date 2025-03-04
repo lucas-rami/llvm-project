@@ -1740,9 +1740,10 @@ bool GCNTargetMachine::parseMachineFunctionInfo(
   if (MFI->initializeBaseYamlFields(YamlMFI, MF, PFS, Error, SourceRange))
     return true;
 
-  if (MFI->Occupancy == 0) {
+  MFI->limitWavesPerEU(MF);
+  if (MFI->Occupancy == 0 || MFI->Occupancy > MFI->getMaxWavesPerEU()) {
     // Fixup the subtarget dependent default value.
-    MFI->Occupancy = ST.getOccupancyWithWorkGroupSizes(MF).second;
+    MFI->Occupancy = MFI->getMaxWavesPerEU();
   }
 
   auto parseRegister = [&](const yaml::StringValue &RegName, Register &RegVal) {

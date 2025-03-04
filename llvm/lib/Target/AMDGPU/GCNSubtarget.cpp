@@ -397,9 +397,25 @@ unsigned GCNSubtarget::getReservedNumVGPRs(const MachineFunction &MF) const {
   const SIRegisterInfo *TRI = getRegisterInfo();
   unsigned NumReserved = hasVGPRForAGPRCopy();
   for (Register Reg : MFI.getWWMReservedRegs()) {
-    for (MCRegAliasIterator R(Reg, TRI, true); R.isValid(); ++R, ++NumReserved)
-      ;
+    dbgs() << "has " << MCRegAliasIterator(Reg, TRI, true).count()
+           << " reserved regs for WWM\n";
+    NumReserved += MCRegAliasIterator(Reg, TRI, true).count();
   }
+  for (Register Reg : MFI.getVGPRSpillAGPRs())
+    NumReserved += MCRegAliasIterator(Reg, TRI, true).count();
+  if (hasGFX90AInsts()) {
+    for (Register Reg : MFI.getAGPRSpillVGPRs())
+      NumReserved += MCRegAliasIterator(Reg, TRI, true).count();
+  }
+  return NumReserved;
+}
+
+unsigned GCNSubtarget::getReservedNumAGPRs(const MachineFunction &MF) const {
+  const SIMachineFunctionInfo &MFI = *MF.getInfo<SIMachineFunctionInfo>();
+  const SIRegisterInfo *TRI = getRegisterInfo();
+  unsigned NumReserved = 0;
+  for (Register Reg : MFI.getAGPRSpillVGPRs())
+    NumReserved += MCRegAliasIterator(Reg, TRI, true).count();
   return NumReserved;
 }
 

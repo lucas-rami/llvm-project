@@ -762,6 +762,13 @@ public:
 
   bool isValid() const { return It != End; }
 
+  unsigned count() {
+    unsigned Count = 0;
+    for (; isValid(); ++(*this), ++Count)
+      ;
+    return Count;
+  }
+
   MCRegister operator*() const { return *It; }
 
   MCRegAliasIterator &operator++() {

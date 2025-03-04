@@ -8,6 +8,7 @@
 
 #include "SIMachineFunctionInfo.h"
 #include "AMDGPUSubtarget.h"
+#include "GCNRegPressure.h"
 #include "GCNSubtarget.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "SIRegisterInfo.h"
@@ -21,9 +22,12 @@
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
+#include "llvm/MC/LaneBitmask.h"
 #include <cassert>
 #include <optional>
 #include <vector>
+
+#define DEBUG_TYPE "si-machine-function-info"
 
 enum { MAX_LANES = 64 };
 
@@ -166,7 +170,8 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const Function &F,
   MaxMemoryClusterDWords = F.getFnAttributeAsParsedInteger(
       "amdgpu-max-memory-cluster-dwords", DefaultMemoryClusterDWordsLimit);
 
-  setVGPRForAGPRCopyIfNeeded(ST);
+  if (ST.hasVGPRForAGPRCopy())
+    setVGPRForAGPRCopy(ST);
 }
 
 MachineFunctionInfo *SIMachineFunctionInfo::clone(
@@ -313,11 +318,9 @@ void SIMachineFunctionInfo::splitWWMSpillRegisters(
   }
 }
 
-void SIMachineFunctionInfo::setVGPRForAGPRCopyIfNeeded(const GCNSubtarget &ST) {
-  if (ST.hasVGPRForAGPRCopy()) {
-    setVGPRForAGPRCopy(AMDGPU::VGPR_32RegClass.getRegister(
-        ST.getMaxNumVGPRs(WavesPerEU.first) - 1));
-  }
+void SIMachineFunctionInfo::setVGPRForAGPRCopy(const GCNSubtarget &ST) {
+  setVGPRForAGPRCopy(AMDGPU::VGPR_32RegClass.getRegister(
+      ST.getMaxNumVGPRs(WavesPerEU.first) - 1));
 }
 
 void SIMachineFunctionInfo::setSGPRForEXECCopy(const MachineFunction &MF) {
@@ -639,6 +642,182 @@ SIMachineFunctionInfo::getGITPtrLoReg(const MachineFunction &MF) const {
     }
   }
   return GitPtrLo;
+}
+
+void SIMachineFunctionInfo::limitWavesPerEU(MachineFunction &MF) {
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  SIMachineFunctionInfo *Info = MF.getInfo<SIMachineFunctionInfo>();
+  const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
+  const SIRegisterInfo *TRI = ST.getRegisterInfo();
+  const SIInstrInfo *TII = ST.getInstrInfo();
+  enum { SGPR = 0, VGPR = 1, AGPR = 2, NUM_REG_CATS = 3 };
+
+  unsigned MaxCounts[NUM_REG_CATS] = {};
+  auto SetMax = [&](unsigned I, unsigned NumRegs) -> void {
+    MaxCounts[I] = std::max(MaxCounts[I], NumRegs);
+  };
+
+  for (MachineBasicBlock &MBB : MF) {
+    // Compute required register usage induced by block live-ins; these will
+    // limit achievable occupancy as well.
+    unsigned LiveInCounts[NUM_REG_CATS] = {};
+    GCNRPTracker::LiveRegSet RPLiveIns;
+    for (const MachineBasicBlock::RegisterMaskPair &LI : MBB.getLiveIns()) {
+      RPLiveIns.insert({LI.PhysReg, LI.LaneMask});
+      const TargetRegisterClass *RC = TRI->getPhysRegBaseClass(LI.PhysReg);
+      unsigned NumRegs = divideCeil(TRI->getRegSizeInBits(*RC), 32);
+      unsigned RegIdx = TRI->getHWRegIndex(LI.PhysReg);
+      if (TRI->isSGPRClass(RC))
+        LiveInCounts[SGPR] = std::max(LiveInCounts[SGPR], NumRegs + RegIdx);
+      else if (TRI->isVGPRClass(RC))
+        LiveInCounts[VGPR] = std::max(LiveInCounts[VGPR], NumRegs + RegIdx);
+      else if (TRI->isAGPRClass(RC))
+        LiveInCounts[AGPR] = std::max(LiveInCounts[AGPR], NumRegs + RegIdx);
+    }
+    LLVM_DEBUG(dbgs() << "Live-ins [SGPRs, VGPRs, AGPRs] = ["
+                      << LiveInCounts[SGPR] << "," << LiveInCounts[VGPR] << ","
+                      << LiveInCounts[AGPR] << "]\n");
+
+    bool InWWM = false;
+    unsigned StrictWMVGPRCount = 0;
+    // GCNDownwardRPTracker RP();
+    // MachineBasicBlock::iterator NonDbgMI = MBB.getFirstNonDebugInstr();
+    // RP.reset(NonDbgMI, &RPLiveIns);
+    for (MachineInstr &MI : MBB) {
+      TII->fixImplicitOperands(MI);
+      if (MI.isDebugInstr())
+        continue;
+
+      if (MI.getOpcode() == AMDGPU::ENTER_STRICT_WWM ||
+          MI.getOpcode() == AMDGPU::ENTER_STRICT_WQM) {
+        InWWM = true;
+      } else if (MI.getOpcode() == AMDGPU::EXIT_STRICT_WWM ||
+                 MI.getOpcode() == AMDGPU::EXIT_STRICT_WQM) {
+        InWWM = false;
+      }
+
+      // Analyze each non-debug MI's register usage; we must leave enough
+      // registers available to be able to shedule the instruction that uses the
+      // "most" registers.
+      unsigned ReadCounts[NUM_REG_CATS] = {}, DefCounts[NUM_REG_CATS] = {},
+               EarlyClobberRWCounts[NUM_REG_CATS] = {},
+               Physical[NUM_REG_CATS] = {};
+      LLVM_DEBUG(dbgs() << MI);
+      for (MachineOperand &MO : MI.operands()) {
+        if (!MO.isReg())
+          continue;
+        Register Reg = MO.getReg();
+
+        // We cannot just use TargetRegisterInfo::getRegClassForOperandReg to
+        // get the register class because some registers may not have their
+        // class set yet when using GlobalISel.
+        const TargetRegisterClass *RC = Reg.isVirtual()
+                                            ? MRI.getRegClassOrNull(Reg)
+                                            : TRI->getPhysRegBaseClass(Reg);
+        if (!RC)
+          continue;
+
+        // Compute number of registers covered by the machine operand.
+        unsigned NumRegs;
+        if (Reg.isVirtual()) {
+          unsigned SubReg = MO.getSubReg();
+          LaneBitmask LM = SubReg ? TRI->getSubRegIndexLaneMask(SubReg)
+                                  : MRI.getMaxLaneMaskForVReg(Reg);
+          NumRegs = SIRegisterInfo::getNumCoveredRegs(LM);
+        } else {
+          NumRegs = divideCeil(TRI->getRegSizeInBits(*RC), 32);
+        }
+
+        // Account for the register in the right categories and class.
+        auto CountRegs = [&](unsigned I) -> void {
+          if (Reg.isPhysical()) {
+            unsigned NumRegs = divideCeil(TRI->getRegSizeInBits(*RC), 32);
+            unsigned RegIdx = TRI->getHWRegIndex(Reg);
+            Physical[I] = std::max(Physical[I], NumRegs + RegIdx);
+          }
+          if (MO.readsReg()) {
+            ReadCounts[I] += NumRegs;
+            if (MO.isEarlyClobber())
+              EarlyClobberRWCounts[I] += NumRegs;
+          }
+          if (MO.isDef())
+            DefCounts[I] += NumRegs;
+        };
+        if (TRI->isSGPRClass(RC)) {
+          if (Reg == AMDGPU::EXEC)
+            continue;
+          CountRegs(SGPR);
+        } else if (TRI->isVGPRClass(RC)) {
+          CountRegs(VGPR);
+          if (InWWM && MO.isDef())
+            StrictWMVGPRCount += NumRegs;
+        } else if (TRI->isAGPRClass(RC)) {
+          CountRegs(AGPR);
+        }
+      }
+
+      auto GetRegUsage = [&](unsigned I) -> unsigned {
+        // An early-clobber register that is also read cannot be used as both an
+        // input and an output register so it counts twice for register usage.
+        unsigned MaxRegCount =
+            std::max(ReadCounts[I], DefCounts[I]) + EarlyClobberRWCounts[I];
+        // Usage of a high-index physical register forces allocation of all
+        // registers with lower indices in the same class.
+        unsigned MaxUsage = std::max(MaxRegCount, Physical[I]);
+        // In the presence of a strict WQM/WWM region, we also have to make sure
+        // the region will be able to scavenge enough registers for VGPR defs
+        // inside the region. This calculation is conservative, but cheap; it
+        // assumes that all VGPRs live at some point in the MBB before the
+        // strict WQM/WWM region are still live at the beginning of the region.
+        return MaxUsage + (I == VGPR ? StrictWMVGPRCount : 0);
+      };
+
+      LLVM_DEBUG(dbgs() << "  [SGPRs, VGPRs, AGPRs] = [" << GetRegUsage(SGPR)
+                        << "," << GetRegUsage(VGPR) << "," << GetRegUsage(AGPR)
+                        << "]\n");
+
+      SetMax(SGPR, GetRegUsage(SGPR));
+      if (ST.hasGFX90AInsts()) {
+        SetMax(VGPR, GCNRegPressure::getUnifiedVGPRNum(GetRegUsage(VGPR),
+                                                       GetRegUsage(AGPR)));
+      } else {
+        SetMax(VGPR, GetRegUsage(VGPR));
+        SetMax(AGPR, GetRegUsage(AGPR));
+      }
+    }
+
+    // Take the maximum register usage between any MI in the block and the block
+    // live-ins.
+    SetMax(SGPR, LiveInCounts[SGPR]);
+    if (ST.hasGFX90AInsts()) {
+      SetMax(VGPR, GCNRegPressure::getUnifiedVGPRNum(LiveInCounts[VGPR],
+                                                     LiveInCounts[AGPR]));
+    } else {
+      SetMax(VGPR, LiveInCounts[VGPR]);
+      SetMax(AGPR, LiveInCounts[AGPR]);
+    }
+  }
+
+  // Add reserved registers to maximums.
+  MaxCounts[SGPR] += ST.getReservedNumSGPRs(MF);
+  MaxCounts[VGPR] += ST.getReservedNumVGPRs(MF);
+  MaxCounts[AGPR] += ST.getReservedNumAGPRs(MF);
+
+  LLVM_DEBUG(dbgs() << "Max. [SGPRs, VGPRs, AGPRs] = [" << MaxCounts[SGPR]
+                    << "," << MaxCounts[VGPR] << "," << MaxCounts[AGPR]
+                    << "]\n");
+  LLVM_DEBUG(dbgs() << "Waves/EU = [" << Info->getMinWavesPerEU() << ","
+                    << Info->getMaxWavesPerEU() << "]\n");
+  unsigned MinOcc = std::min(Info->getMaxWavesPerEU(),
+                             ST.getOccupancyWithNumSGPRs(MaxCounts[SGPR]));
+  if (ST.hasGFX90AInsts()) {
+    MinOcc = std::min(MinOcc, ST.getOccupancyWithNumVGPRs(MaxCounts[VGPR]));
+  } else {
+    MinOcc = std::min(MinOcc, ST.getOccupancyWithNumVGPRs(
+                                  std::max(MaxCounts[VGPR], MaxCounts[AGPR])));
+  }
+  Info->limitWavesPerEU(MF, MinOcc);
+  LLVM_DEBUG(dbgs() << "  Limiting occupancy to " << MinOcc << "\n");
 }
 
 static yaml::StringValue regToString(Register Reg,
