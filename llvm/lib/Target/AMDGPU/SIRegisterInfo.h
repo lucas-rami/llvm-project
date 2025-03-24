@@ -296,6 +296,11 @@ public:
                                 const MachineFunction &MF,
                                 bool ReserveHighestVGPR = false) const;
 
+  MCRegister findUnusedRegister(const MachineRegisterInfo &MRI,
+                                const TargetRegisterClass *RC,
+                                const LiveRegUnits &LiveUnits,
+                                bool ReserveHighestVGPR = false) const;
+
   const TargetRegisterClass *getRegClassForReg(const MachineRegisterInfo &MRI,
                                                Register Reg) const;
   const TargetRegisterClass *

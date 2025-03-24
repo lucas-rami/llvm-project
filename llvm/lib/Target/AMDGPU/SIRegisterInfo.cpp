@@ -703,10 +703,6 @@ BitVector SIRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     reserveRegisterTuples(Reserved, ScratchRSrcReg);
   }
 
-  Register LongBranchReservedReg = MFI->getLongBranchReservedReg();
-  if (LongBranchReservedReg)
-    reserveRegisterTuples(Reserved, LongBranchReservedReg);
-
   // We have to assume the SP is needed in case there are calls in the function,
   // which is detected after the function is lowered. If we aren't really going
   // to need SP, don't bother reserving it.
@@ -728,11 +724,9 @@ BitVector SIRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     assert(!isSubRegister(ScratchRSrcReg, BasePtrReg));
   }
 
-  // FIXME: Use same reserved register introduced in D149775
-  // SGPR used to preserve EXEC MASK around WWM spill/copy instructions.
-  Register ExecCopyReg = MFI->getSGPRForEXECCopy();
-  if (ExecCopyReg)
-    reserveRegisterTuples(Reserved, ExecCopyReg);
+  Register HighSGPR = MFI->getSharedHighSGPR();
+  if (HighSGPR)
+    reserveRegisterTuples(Reserved, HighSGPR);
 
   // Reserve VGPRs/AGPRs.
   //
@@ -3604,6 +3598,25 @@ MCRegister SIRegisterInfo::findUnusedRegister(
     for (MCRegister Reg : *RC)
       if (MRI.isAllocatable(Reg) && !MRI.isPhysRegUsed(Reg))
         return Reg;
+  }
+  return MCRegister();
+}
+
+MCRegister SIRegisterInfo::findUnusedRegister(
+    const MachineRegisterInfo &MRI, const TargetRegisterClass *RC,
+    const LiveRegUnits &LiveUnits, bool ReserveHighestRegister) const {
+  if (ReserveHighestRegister) {
+    for (MCRegister Reg : reverse(*RC)) {
+      if (!MRI.isPhysRegUsed(Reg) && LiveUnits.available(Reg) &&
+          !MRI.isReserved(Reg))
+        return Reg;
+    }
+  } else {
+    for (MCRegister Reg : *RC) {
+      if (!MRI.isPhysRegUsed(Reg) && LiveUnits.available(Reg) &&
+          !MRI.isReserved(Reg))
+        return Reg;
+    }
   }
   return MCRegister();
 }

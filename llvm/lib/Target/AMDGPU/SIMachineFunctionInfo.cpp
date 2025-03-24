@@ -330,6 +330,37 @@ bool SIMachineFunctionInfo::isCalleeSavedReg(const MCPhysReg *CSRegs,
   return false;
 }
 
+MCRegister SIMachineFunctionInfo::shiftSharedHighSGPRToLowestRange(
+    const MachineFunction &MF, const LiveRegUnits *LiveUnits) {
+  Register SharedReg = getSharedHighSGPR();
+  assert(SharedReg && "no shared high SGPR to shift");
+
+  const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
+  const SIRegisterInfo &TRI = ST.getInstrInfo()->getRegisterInfo();
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+
+  const TargetRegisterClass *RC = TRI.getRegClassForReg(MRI, SharedReg);
+  MCRegister UnusedLowSGPR;
+  if (LiveUnits) {
+    UnusedLowSGPR = TRI.findUnusedRegister(MRI, RC, *LiveUnits);
+  } else {
+    UnusedLowSGPR = TRI.findUnusedRegister(MRI, RC, MF);
+  }
+  if (!UnusedLowSGPR ||
+      TRI.getHWRegIndex(UnusedLowSGPR) >= TRI.getHWRegIndex(SharedReg))
+    return SharedReg;
+
+  if (LongBranchReservedReg)
+    LongBranchReservedReg = UnusedLowSGPR;
+  if (SGPRForEXECCopy) {
+    if (LongBranchReservedReg && ST.isWave32())
+      SGPRForEXECCopy = TRI.getSubReg(UnusedLowSGPR, AMDGPU::sub0);
+    else
+      SGPRForEXECCopy = UnusedLowSGPR;
+  }
+  return UnusedLowSGPR;
+}
+
 void SIMachineFunctionInfo::shiftWwmVGPRsToLowestRange(
     MachineFunction &MF, SmallVectorImpl<Register> &WWMVGPRs,
     BitVector &SavedVGPRs) {
@@ -420,6 +451,15 @@ bool SIMachineFunctionInfo::allocatePhysicalVGPRForSGPRSpills(
 
   SGPRSpillsToPhysicalVGPRLanes[FI].emplace_back(LaneVGPR, LaneIndex);
   return true;
+}
+
+Register
+SIMachineFunctionInfo::allocateHighSharedSGPR(const MachineFunction &MF,
+                                              const GCNSubtarget &ST,
+                                              const TargetRegisterClass *RC) {
+  const SIRegisterInfo *TRI = ST.getRegisterInfo();
+  unsigned NumRegs = divideCeil(TRI->getRegSizeInBits(*RC), 32);
+  return TRI->getAlignedHighSGPRForRC(MF, /*Align=*/NumRegs, RC);
 }
 
 bool SIMachineFunctionInfo::allocateSGPRSpillToVGPRLane(

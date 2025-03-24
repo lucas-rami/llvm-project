@@ -396,7 +396,6 @@ bool SILowerSGPRSpills::run(MachineFunction &MF) {
   bool HasCSRs = spillCalleeSavedRegs(MF, CalleeSavedFIs);
 
   MachineFrameInfo &MFI = MF.getFrameInfo();
-  MachineRegisterInfo &MRI = MF.getRegInfo();
   SIMachineFunctionInfo *FuncInfo = MF.getInfo<SIMachineFunctionInfo>();
 
   if (!MFI.hasStackObjects() && !HasCSRs) {
@@ -540,18 +539,15 @@ bool SILowerSGPRSpills::run(MachineFunction &MF) {
   }
 
   if (SpilledToVirtVGPRLanes) {
-    const TargetRegisterClass *RC = TRI->getWaveMaskRegClass();
     // Shift back the reserved SGPR for EXEC copy into the lowest range.
     // This SGPR is reserved to handle the whole-wave spill/copy operations
     // that might get inserted during vgpr regalloc.
-    Register UnusedLowSGPR = TRI->findUnusedRegister(MRI, RC, MF);
-    if (UnusedLowSGPR && TRI->getHWRegIndex(UnusedLowSGPR) <
-                             TRI->getHWRegIndex(FuncInfo->getSGPRForEXECCopy()))
-      FuncInfo->setSGPRForEXECCopy(UnusedLowSGPR);
+    if (FuncInfo->getSGPRForEXECCopy())
+      FuncInfo->shiftSharedHighSGPRToLowestRange(MF);
   } else {
     // No SGPR spills to virtual VGPR lanes and hence there won't be any WWM
     // spills/copies. Reset the SGPR reserved for EXEC copy.
-    FuncInfo->setSGPRForEXECCopy(AMDGPU::NoRegister);
+    FuncInfo->clearSGPRForEXECCopy();
   }
 
   SaveBlocks.clear();

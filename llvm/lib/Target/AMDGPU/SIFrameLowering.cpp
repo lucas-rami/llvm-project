@@ -1521,15 +1521,13 @@ void SIFrameLowering::processFunctionBeforeFrameIndicesReplaced(
   // We initally reserved the highest available SGPR pair for long branches
   // now, after RA, we shift down to a lower unused one if one exists
   Register LongBranchReservedReg = FuncInfo->getLongBranchReservedReg();
-  Register UnusedLowSGPR =
-      TRI->findUnusedRegister(MRI, &AMDGPU::SGPR_64RegClass, MF);
   // If LongBranchReservedReg is null then we didn't find a long branch
   // and never reserved a register to begin with so there is nothing to
   // shift down. Then if UnusedLowSGPR is null, there isn't available lower
   // register to use so just keep the original one we set.
-  if (LongBranchReservedReg && UnusedLowSGPR) {
-    FuncInfo->setLongBranchReservedReg(UnusedLowSGPR);
-    MRI.reserveReg(UnusedLowSGPR, TRI);
+  if (LongBranchReservedReg) {
+    if (Register NewSGPR = FuncInfo->shiftSharedHighSGPRToLowestRange(MF))
+      MRI.reserveReg(NewSGPR, TRI);
   }
 }
 
@@ -1558,13 +1556,12 @@ void SIFrameLowering::determinePrologEpilogSGPRSaves(
       (ReservedRegForExecCopy &&
        MRI.isPhysRegUsed(ReservedRegForExecCopy, /*SkipRegMaskTest=*/true))) {
     MRI.reserveReg(ReservedRegForExecCopy, TRI);
-    Register UnusedScratchReg = findUnusedRegister(MRI, LiveUnits, RC);
-    if (UnusedScratchReg) {
+    Register NewSGPR = MFI->shiftSharedHighSGPRToLowestRange(MF, &LiveUnits);
+    if (NewSGPR != ReservedRegForExecCopy) {
       // If found any unused scratch SGPR, reserve the register itself for Exec
       // copy and there is no need for any spills in that case.
-      MFI->setSGPRForEXECCopy(UnusedScratchReg);
-      MRI.replaceRegWith(ReservedRegForExecCopy, UnusedScratchReg);
-      LiveUnits.addReg(UnusedScratchReg);
+      MRI.replaceRegWith(ReservedRegForExecCopy, NewSGPR);
+      LiveUnits.addReg(NewSGPR);
     } else {
       // Needs spill.
       assert(!MFI->hasPrologEpilogSGPRSpillEntry(ReservedRegForExecCopy) &&
@@ -1575,7 +1572,7 @@ void SIFrameLowering::determinePrologEpilogSGPRSaves(
   } else if (ReservedRegForExecCopy) {
     // Reset it at this point. There are no whole-wave copies and spills
     // encountered.
-    MFI->setSGPRForEXECCopy(AMDGPU::NoRegister);
+    MFI->clearSGPRForEXECCopy();
   }
 
   // hasFP only knows about stack objects that already exist. We're now

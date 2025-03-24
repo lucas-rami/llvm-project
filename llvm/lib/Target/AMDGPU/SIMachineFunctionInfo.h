@@ -583,6 +583,10 @@ private:
                                          unsigned LaneIndex,
                                          bool IsPrologEpilog);
 
+  MCRegister allocateHighSharedSGPR(const MachineFunction &MF,
+                                    const GCNSubtarget &ST,
+                                    const TargetRegisterClass *RC);
+
 public:
   Register getVGPRForAGPRCopy() const {
     return VGPRForAGPRCopy;
@@ -741,9 +745,48 @@ public:
     return SpillAGPR;
   }
 
+  /// Returns the shared high SGPR, if it was allocated.
+  Register getSharedHighSGPR() const {
+    // LongBranchReservedReg is always the wider register.
+    return LongBranchReservedReg ? LongBranchReservedReg : SGPRForEXECCopy;
+  }
+
+  /// Shifts shared SGPR initially allocated to the highest possible index to
+  /// the lowest available range. Returns the new shared physical SGPR.
+  MCRegister
+  shiftSharedHighSGPRToLowestRange(const MachineFunction &MF,
+                                   const LiveRegUnits *LiveUnits = nullptr);
+
   Register getSGPRForEXECCopy() const { return SGPRForEXECCopy; }
 
-  void setSGPRForEXECCopy(Register Reg) { SGPRForEXECCopy = Reg; }
+  /// Allocates a high-index SGPT to store EXEC copies. The SGPR might be shared
+  /// with the one used to store the target of long branches.
+  void allocateSGPRForEXECCopy(const MachineFunction &MF) {
+    const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
+    const SIRegisterInfo &TRI = ST.getInstrInfo()->getRegisterInfo();
+    if (LongBranchReservedReg) {
+      SGPRForEXECCopy =
+          ST.isWave32()
+              ? Register(TRI.getSubReg(LongBranchReservedReg, AMDGPU::sub0))
+              : LongBranchReservedReg;
+    } else {
+      SGPRForEXECCopy =
+          allocateHighSharedSGPR(MF, ST, TRI.getWaveMaskRegClass());
+    }
+  }
+
+  /// Signals that we won't end up needing an SGPR for EXEC copies.
+  void clearSGPRForEXECCopy() { SGPRForEXECCopy = AMDGPU::NoRegister; }
+
+  Register getLongBranchReservedReg() const { return LongBranchReservedReg; }
+
+  /// Allocates a high-index SGPR to store the target of long branches. The SGPR
+  /// might be shared with the one used to save EXEC copies.
+  void allocateLongBranchReservedReg(const MachineFunction &MF) {
+    const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
+    LongBranchReservedReg =
+        allocateHighSharedSGPR(MF, ST, &AMDGPU::SGPR_64RegClass);
+  }
 
   ArrayRef<MCPhysReg> getVGPRSpillAGPRs() const {
     return SpillVGPR;
@@ -975,8 +1018,6 @@ public:
     StackPtrOffsetReg = Reg;
   }
 
-  void setLongBranchReservedReg(Register Reg) { LongBranchReservedReg = Reg; }
-
   // Note the unset value for this is AMDGPU::SP_REG rather than
   // NoRegister. This is mostly a workaround for MIR tests where state that
   // can't be directly computed from the function is not preserved in serialized
@@ -984,8 +1025,6 @@ public:
   Register getStackPtrOffsetReg() const {
     return StackPtrOffsetReg;
   }
-
-  Register getLongBranchReservedReg() const { return LongBranchReservedReg; }
 
   Register getQueuePtrUserSGPR() const {
     return ArgInfo.QueuePtr.getRegister();

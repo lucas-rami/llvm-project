@@ -144,7 +144,7 @@ bool GCNPreRALongBranchReg::run(MachineFunction &MF) {
     // If the distance falls outside the threshold assume it is a long branch
     // and we need to reserve the registers
     if (!TII->isBranchOffsetInRange(Last->getOpcode(), BlockDistance)) {
-      MFI->setLongBranchReservedReg(LongBranchReservedReg);
+      MFI->allocateLongBranchReservedReg(MF);
       return true;
     }
   }
