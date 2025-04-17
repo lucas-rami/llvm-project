@@ -1085,11 +1085,22 @@ std::optional<NewOpResult> DwarfExpression::traverse(DIOp::AddrOf AddrOf,
 
 std::optional<NewOpResult> DwarfExpression::traverse(DIOp::Convert Convert,
                                                      ChildrenT Children) {
-  auto Child = traverse(Children[0].get(), ValueKind::Value);
+  auto Child = traverse(Children[0].get(), /*RequiredVK=*/std::nullopt);
   if (!Child)
     return std::nullopt;
 
   Type *DestTy = Convert.getResultType();
+  if (Child->Ty->isPointerTy() && DestTy->isPointerTy() &&
+      Child->Ty->getPointerAddressSpace() != DestTy->getPointerAddressSpace()) {
+    // FIXME (in the next commit): handle divergent address spaces here.
+    return std::nullopt;
+  }
+
+  // If we're not dealing with the divergent address space case, Convert
+  // requires a value operand.
+  if (Child->VK == ValueKind::LocationDesc)
+    readToValue(Child->Ty);
+
   if (!Child->Ty->isIntegerTy() || !DestTy->isIntegerTy())
     return std::nullopt;
 
