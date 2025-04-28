@@ -55,9 +55,9 @@ AMDGPUSubtarget::getMaxLocalMemSizeWithWaveCount(unsigned NWaves,
   return getLocalMemorySize() / WorkGroupsPerCU;
 }
 
-std::pair<unsigned, unsigned>
-AMDGPUSubtarget::getOccupancyWithWorkGroupSizes(uint32_t LDSBytes,
-                                                const Function &F) const {
+std::pair<unsigned, unsigned> AMDGPUSubtarget::getOccupancyWithWorkGroupSizes(
+    uint32_t LDSBytes, std::pair<unsigned, unsigned> FlatWorkGroupSizes) const {
+
   // FIXME: We should take into account the LDS allocation granularity.
   const unsigned MaxWGsLDS = getLocalMemorySize() / std::max(LDSBytes, 1u);
 
@@ -81,7 +81,7 @@ AMDGPUSubtarget::getOccupancyWithWorkGroupSizes(uint32_t LDSBytes,
   // workgroups, maximum number of waves, and minimum occupancy. The opposite is
   // generally true for the minimum group size. LDS or barrier ressource
   // limitations can flip those minimums/maximums.
-  const auto [MinWGSize, MaxWGSize] = getFlatWorkGroupSizes(F);
+  const auto &[MinWGSize, MaxWGSize] = FlatWorkGroupSizes;
   auto [MinWavesPerWG, MaxWGsPerCU, MaxWavesPerCU] = PropsFromWGSize(MinWGSize);
   auto [MaxWavesPerWG, MinWGsPerCU, MinWavesPerCU] = PropsFromWGSize(MaxWGSize);
 
@@ -135,6 +135,12 @@ AMDGPUSubtarget::getOccupancyWithWorkGroupSizes(uint32_t LDSBytes,
           std::clamp(divideCeil(MaxWavesPerCU, getEUsPerCU()), 1U, WavesPerEU)};
 }
 
+std::pair<unsigned, unsigned>
+AMDGPUSubtarget::getOccupancyWithWorkGroupSizes(uint32_t LDSBytes,
+                                                const Function &F) const {
+  return getOccupancyWithWorkGroupSizes(LDSBytes, getFlatWorkGroupSizes(F));
+}
+
 std::pair<unsigned, unsigned> AMDGPUSubtarget::getOccupancyWithWorkGroupSizes(
     const MachineFunction &MF) const {
   const auto *MFI = MF.getInfo<SIMachineFunctionInfo>();
@@ -181,39 +187,44 @@ std::pair<unsigned, unsigned> AMDGPUSubtarget::getFlatWorkGroupSizes(
 
 std::pair<unsigned, unsigned> AMDGPUSubtarget::getEffectiveWavesPerEU(
     std::pair<unsigned, unsigned> Requested,
-    std::pair<unsigned, unsigned> FlatWorkGroupSizes) const {
-  // Default minimum/maximum number of waves per execution unit.
-  std::pair<unsigned, unsigned> Default(1, getMaxWavesPerEU());
+    std::pair<unsigned, unsigned> FlatWorkGroupSizes, unsigned LDSBytes) const {
+  // Default minimum/maximum number of waves per EU. The range of flat workgroup
+  // sizes limits the achievable maximum, and we aim to support enough waves per
+  // EU so that we can concurrently execute all waves of a single workgroup of
+  // maximum size on a CU.
+  std::pair<unsigned, unsigned> WavesPerEU(
+      getWavesPerEUForWorkGroup(FlatWorkGroupSizes.second),
+      getOccupancyWithWorkGroupSizes(LDSBytes, FlatWorkGroupSizes).second);
 
-  // If minimum/maximum flat work group sizes were explicitly requested using
-  // "amdgpu-flat-workgroup-size" attribute, then set default minimum/maximum
-  // number of waves per execution unit to values implied by requested
-  // minimum/maximum flat work group sizes.
-  unsigned MinImpliedByFlatWorkGroupSize =
-    getWavesPerEUForWorkGroup(FlatWorkGroupSizes.second);
-  Default.first = MinImpliedByFlatWorkGroupSize;
+  if (Requested.first) {
+    // Requested minimum must not violate subtarget's specifications.
+    if (Requested.first < getMinWavesPerEU())
+      return WavesPerEU;
+    // When both are requested, requested minimum must be less than requested
+    // maximum, the latter of which must not violate subtarget's specifications.
+    if (Requested.second && (Requested.first > Requested.second ||
+                             Requested.second > getMaxWavesPerEU()))
+      return WavesPerEU;
+  }
 
-  // Make sure requested minimum is less than requested maximum.
-  if (Requested.second && Requested.first > Requested.second)
-    return Default;
-
-  // Make sure requested values do not violate subtarget's specifications.
-  if (Requested.first < getMinWavesPerEU() ||
-      Requested.second > getMaxWavesPerEU())
-    return Default;
-
-  // Make sure requested values are compatible with values implied by requested
-  // minimum/maximum flat work group sizes.
-  if (Requested.first < MinImpliedByFlatWorkGroupSize)
-    return Default;
-
-  return Requested;
+  if (Requested.second) {
+    // A requested maximum may limit both the final minimum and maximum, but
+    // not increase them.
+    WavesPerEU.second = std::min(WavesPerEU.second, Requested.second);
+    WavesPerEU.first = std::min(WavesPerEU.first, WavesPerEU.second);
+  }
+  if (Requested.first) {
+    // A requested minimum can either decrease or increase the default minimum
+    // as long as it doesn't exceed the maximum.
+    WavesPerEU.first = std::min(WavesPerEU.second, Requested.first);
+  }
+  return WavesPerEU;
 }
 
 std::pair<unsigned, unsigned> AMDGPUSubtarget::getWavesPerEU(
     const Function &F, std::pair<unsigned, unsigned> FlatWorkGroupSizes) const {
   // Default minimum/maximum number of waves per execution unit.
-  std::pair<unsigned, unsigned> Default(1, getMaxWavesPerEU());
+  std::pair<unsigned, unsigned> Default(0, 0);
 
   // Requested minimum/maximum number of waves per execution unit.
   std::pair<unsigned, unsigned> Requested =

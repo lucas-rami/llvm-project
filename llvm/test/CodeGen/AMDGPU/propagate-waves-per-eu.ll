@@ -218,7 +218,7 @@ define internal i32 @bitcasted_function() {
 
 define internal void @called_from_invalid_bounds_0() {
 ; CHECK-LABEL: define internal void @called_from_invalid_bounds_0
-; CHECK-SAME: () #[[ATTR10:[0-9]+]] {
+; CHECK-SAME: () #[[ATTR0]] {
 ; CHECK-NEXT:    ret void
 ;
   ret void
@@ -226,7 +226,7 @@ define internal void @called_from_invalid_bounds_0() {
 
 define internal void @called_from_invalid_bounds_1() {
 ; CHECK-LABEL: define internal void @called_from_invalid_bounds_1
-; CHECK-SAME: () #[[ATTR10]] {
+; CHECK-SAME: () #[[ATTR10:[0-9]+]] {
 ; CHECK-NEXT:    ret void
 ;
   ret void

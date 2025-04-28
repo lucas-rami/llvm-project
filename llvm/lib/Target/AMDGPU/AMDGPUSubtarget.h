@@ -118,14 +118,25 @@ public:
   std::pair<unsigned, unsigned>
   getWavesPerEU(const Function &F,
                 std::pair<unsigned, unsigned> FlatWorkGroupSizes) const;
-  std::pair<unsigned, unsigned> getEffectiveWavesPerEU(
-      std::pair<unsigned, unsigned> WavesPerEU,
-      std::pair<unsigned, unsigned> FlatWorkGroupSizes) const;
+
+  std::pair<unsigned, unsigned>
+  getEffectiveWavesPerEU(std::pair<unsigned, unsigned> WavesPerEU,
+                         std::pair<unsigned, unsigned> FlatWorkGroupSizes,
+                         unsigned LDSBytes = 0) const;
 
   /// Return the amount of LDS that can be used that will not restrict the
   /// occupancy lower than WaveCount.
   unsigned getMaxLocalMemSizeWithWaveCount(unsigned WaveCount,
                                            const Function &) const;
+
+  /// Subtarget's minimum/maximum occupancy, in number of waves per EU, that can
+  /// be achieved when the only function running on a CU is \p F and each
+  /// workgroup running the function requires \p LDSBytes bytes of LDS space.
+  /// This notably depends on the range of allowed flat group sizes for the
+  /// function and hardware characteristics.
+  std::pair<unsigned, unsigned> getOccupancyWithWorkGroupSizes(
+      uint32_t LDSBytes,
+      std::pair<unsigned, unsigned> FlatWorkGroupSizes) const;
 
   /// Subtarget's minimum/maximum occupancy, in number of waves per EU, that can
   /// be achieved when the only function running on a CU is \p F and each
