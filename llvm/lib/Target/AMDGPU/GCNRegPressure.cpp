@@ -35,17 +35,9 @@ bool llvm::isEqual(const GCNRPTracker::LiveRegSet &S1,
 ///////////////////////////////////////////////////////////////////////////////
 // GCNRegPressure
 
-unsigned GCNRegPressure::getRegKind(Register Reg,
-                                    const MachineRegisterInfo &MRI) {
-  assert(Reg.isVirtual());
-  const auto *const RC = MRI.getRegClass(Reg);
-  const auto *STI =
-      static_cast<const SIRegisterInfo *>(MRI.getTargetRegisterInfo());
-  return STI->isSGPRClass(RC)
-             ? (STI->getRegSizeInBits(*RC) == 32 ? SGPR32 : SGPR_TUPLE)
-         : STI->isAGPRClass(RC)
-             ? (STI->getRegSizeInBits(*RC) == 32 ? AGPR32 : AGPR_TUPLE)
-             : (STI->getRegSizeInBits(*RC) == 32 ? VGPR32 : VGPR_TUPLE);
+unsigned GCNRegPressure::getRegKind(const TargetRegisterClass *RC,
+                                    const SIRegisterInfo *STI) {
+  return STI->isSGPRClass(RC) ? SGPR : (STI->isAGPRClass(RC) ? AGPR : VGPR);
 }
 
 void GCNRegPressure::inc(unsigned Reg,
@@ -62,31 +54,17 @@ void GCNRegPressure::inc(unsigned Reg,
     Sign = -1;
   }
 
-  switch (auto Kind = getRegKind(Reg, MRI)) {
-  case SGPR32:
-  case VGPR32:
-  case AGPR32:
-    Value[Kind] += Sign;
-    break;
-
-  case SGPR_TUPLE:
-  case VGPR_TUPLE:
-  case AGPR_TUPLE:
-    assert(PrevMask < NewMask);
-
-    Value[Kind == SGPR_TUPLE ? SGPR32 : Kind == AGPR_TUPLE ? AGPR32 : VGPR32] +=
-      Sign * SIRegisterInfo::getNumCoveredRegs(~PrevMask & NewMask);
-
-    if (PrevMask.none()) {
-      assert(NewMask.any());
-      const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
-      Value[Kind] +=
-          Sign * TRI->getRegClassWeight(MRI.getRegClass(Reg)).RegWeight;
-    }
-    break;
-
-  default: llvm_unreachable("Unknown register kind");
+  const TargetRegisterClass *RC = MRI.getRegClass(Reg);
+  const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
+  const SIRegisterInfo *STI = static_cast<const SIRegisterInfo *>(TRI);
+  unsigned RegKind = getRegKind(RC, STI);
+  if (TRI->getRegSizeInBits(*RC) != 32) {
+    // Reg is from a tuple register class, account for the class's weight.
+    if (PrevMask.none())
+      TupleValue[RegKind] += Sign * TRI->getRegClassWeight(RC).RegWeight;
+    Sign *= SIRegisterInfo::getNumCoveredRegs(~PrevMask & NewMask);
   }
+  Value[RegKind] += Sign;
 }
 
 bool GCNRegPressure::less(const MachineFunction &MF, const GCNRegPressure &O,
@@ -226,7 +204,7 @@ bool GCNRegPressure::less(const MachineFunction &MF, const GCNRegPressure &O,
 
 Printable llvm::print(const GCNRegPressure &RP, const GCNSubtarget *ST) {
   return Printable([&RP, ST](raw_ostream &OS) {
-    OS << "VGPRs: " << RP.Value[GCNRegPressure::VGPR32] << ' '
+    OS << "VGPRs: " << RP.Value[GCNRegPressure::VGPR] << ' '
        << "AGPRs: " << RP.getAGPRNum();
     if (ST)
       OS << "(O"
