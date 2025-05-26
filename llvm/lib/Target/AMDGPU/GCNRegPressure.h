@@ -70,8 +70,9 @@ struct GCNRegPressure {
   unsigned getSGPRTuplesWeight() const { return Value[SGPR]; }
 
   unsigned getOccupancy(const GCNSubtarget &ST) const {
-    return std::min(ST.getOccupancyWithNumSGPRs(getSGPRNum()),
-             ST.getOccupancyWithNumVGPRs(getVGPRNum(ST.hasGFX90AInsts())));
+    return std::min(
+        ST.getOccupancyWithNumSGPRs(getSGPRNum()),
+        ST.getOccupancyWithNumVGPRs(getVGPRNum(ST.hasGFX90AInsts())));
   }
 
   void inc(unsigned Reg,
@@ -153,6 +154,52 @@ inline GCNRegPressure operator-(const GCNRegPressure &P1,
   Diff -= P2;
   return Diff;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// GCNRPTarget
+
+class GCNRPTarget {
+public:
+  const GCNRegPressure StartingRP;
+  GCNRegPressure RP;
+
+  unsigned MaxSGPRs;
+  unsigned MaxVGPRs;
+  unsigned MaxUnifiedVGPRs;
+  bool AGPRToArchVGPRSpill;
+
+  GCNRPTarget(const MachineFunction &MF, const GCNRegPressure &RP,
+              bool AGPRToArchVGPRSpill = false);
+
+  GCNRPTarget(unsigned Occupancy, const GCNSubtarget &ST,
+              const GCNRegPressure &RP, bool AGPRToArchVGPRSpill = false);
+
+  void setTargetOccupancy(unsigned Occupancy, const GCNSubtarget &ST,
+                          bool AGPRToArchVGPRSpill = false);
+
+  bool saveRegIfUseful(Register Reg, LaneBitmask Mask,
+                       const MachineRegisterInfo &MRI);
+
+  bool reached() const;
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+  friend raw_ostream &operator<<(raw_ostream &OS, const GCNRPTarget &Target) {
+    OS << "Actual/Target: " << Target.RP.getSGPRNum() << '/' << Target.MaxSGPRs
+       << " SGPRs, " << Target.RP.getArchVGPRNum() << '/' << Target.MaxVGPRs
+       << " ArchVGPRs, " << Target.RP.getAGPRNum() << '/' << Target.MaxVGPRs
+       << " AGPRs";
+    if (Target.MaxUnifiedVGPRs)
+      OS << ", " << Target.RP.getVGPRNum(true) << '/' << Target.MaxUnifiedVGPRs
+         << " VGPRs (unified)";
+    OS << '\n';
+    return OS;
+  }
+#endif
+
+private:
+  void setRegLimits(unsigned MaxSGPRs, unsigned MaxVGPRs,
+                    const GCNSubtarget &ST);
+};
 
 ///////////////////////////////////////////////////////////////////////////////
 // GCNRPTracker
@@ -362,7 +409,7 @@ getLiveRegMap(Range &&R, bool After, LiveIntervals &LIS) {
     if (!LI.hasSubRanges()) {
       for (auto SI : LiveIdxs)
         LiveRegMap[SII.getInstructionFromIndex(SI)][Reg] =
-          MRI.getMaxLaneMaskForVReg(Reg);
+            MRI.getMaxLaneMaskForVReg(Reg);
     } else
       for (const auto &S : LI.subranges()) {
         // constrain search for subranges by indexes live at main range
