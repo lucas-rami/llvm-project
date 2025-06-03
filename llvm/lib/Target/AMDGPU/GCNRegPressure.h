@@ -70,8 +70,9 @@ struct GCNRegPressure {
   unsigned getSGPRTuplesWeight() const { return Value[TOTAL_KINDS + SGPR]; }
 
   unsigned getOccupancy(const GCNSubtarget &ST) const {
-    return std::min(ST.getOccupancyWithNumSGPRs(getSGPRNum()),
-             ST.getOccupancyWithNumVGPRs(getVGPRNum(ST.hasGFX90AInsts())));
+    return std::min(
+        ST.getOccupancyWithNumSGPRs(getSGPRNum()),
+        ST.getOccupancyWithNumVGPRs(getVGPRNum(ST.hasGFX90AInsts())));
   }
 
   void inc(unsigned Reg,
@@ -156,6 +157,77 @@ inline GCNRegPressure operator-(const GCNRegPressure &P1,
   Diff -= P2;
   return Diff;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// GCNRPTarget
+
+/// Models a register pressure target, allowing to evaluate and track register
+/// savings against that target from a starting GCNRegPressure.
+class GCNRPTarget {
+public:
+  /// Current register pressure.
+  GCNRegPressure RP;
+
+  /// Target number of SGPRs.
+  unsigned MaxSGPRs;
+  /// Target number of ArchVGPRs and AGPRs.
+  unsigned MaxVGPRs;
+  /// Target number of overall VGPRs for subtargets with unified RFs. Always 0
+  /// for subtargets with non-unified RFs.
+  unsigned MaxUnifiedVGPRs;
+  /// Whether to allow free ArchVGPR slots to be used to spill AGPRs to in
+  /// pressure calculations.
+  bool AGPRToArchVGPRSpill;
+
+  /// Sets up the target such that the register pressure starting at \p RP does
+  /// not show register spilling on function \p MF (w.r.t. the function's
+  /// mininum target occupancy).
+  GCNRPTarget(const MachineFunction &MF, const GCNRegPressure &RP,
+              bool AGPRToArchVGPRSpill = false);
+
+  /// Sets up the target such that the register pressure starting at \p RP does
+  /// not use more than \p NumSGPRs SGPRs and \p NumVGPRs VGPRs on subtarget \p
+  /// ST.
+  GCNRPTarget(unsigned NumSGPRs, unsigned NumVGPRs, const GCNSubtarget &ST,
+              const GCNRegPressure &RP, bool AGPRToArchVGPRSpill = false);
+
+  /// Sets up the target such that the register pressure starting at \p RP does
+  /// not prevent achieving an occupancy of at least \p Occupancy on subtarget
+  /// \p ST.
+  GCNRPTarget(unsigned Occupancy, const GCNSubtarget &ST,
+              const GCNRegPressure &RP, bool AGPRToArchVGPRSpill = false);
+
+  /// Determines whether saving virtual register \p Reg with lanemask \p Mask
+  /// will be beneficial towards achieving the RP target.
+  bool isSaveBeneficial(Register Reg, LaneBitmask Mask,
+                        const MachineRegisterInfo &MRI) const;
+
+  /// Saves virtual register \p Reg with lanemask \p Mask.
+  void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
+    RP.inc(Reg, Mask, LaneBitmask::getNone(), MRI);
+  }
+
+  /// Whether the current RP is at or below the defined pressure target.
+  bool satisfied() const;
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+  friend raw_ostream &operator<<(raw_ostream &OS, const GCNRPTarget &Target) {
+    OS << "Actual/Target: " << Target.RP.getSGPRNum() << '/' << Target.MaxSGPRs
+       << " SGPRs, " << Target.RP.getArchVGPRNum() << '/' << Target.MaxVGPRs
+       << " ArchVGPRs, " << Target.RP.getAGPRNum() << '/' << Target.MaxVGPRs
+       << " AGPRs";
+    if (Target.MaxUnifiedVGPRs)
+      OS << ", " << Target.RP.getVGPRNum(true) << '/' << Target.MaxUnifiedVGPRs
+         << " VGPRs (unified)";
+    OS << '\n';
+    return OS;
+  }
+#endif
+
+private:
+  void setRegLimits(unsigned MaxSGPRs, unsigned MaxVGPRs,
+                    const GCNSubtarget &ST);
+};
 
 ///////////////////////////////////////////////////////////////////////////////
 // GCNRPTracker
@@ -365,7 +437,7 @@ getLiveRegMap(Range &&R, bool After, LiveIntervals &LIS) {
     if (!LI.hasSubRanges()) {
       for (auto SI : LiveIdxs)
         LiveRegMap[SII.getInstructionFromIndex(SI)][Reg] =
-          MRI.getMaxLaneMaskForVReg(Reg);
+            MRI.getMaxLaneMaskForVReg(Reg);
     } else
       for (const auto &S : LI.subranges()) {
         // constrain search for subranges by indexes live at main range

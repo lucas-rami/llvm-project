@@ -335,6 +335,85 @@ static LaneBitmask findUseBetween(unsigned Reg, LaneBitmask LastUseMask,
   return LastUseMask;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// GCNRPTarget
+
+GCNRPTarget::GCNRPTarget(const MachineFunction &MF, const GCNRegPressure &RP,
+                         bool AGPRToArchVGPRSpill)
+    : RP(RP), AGPRToArchVGPRSpill(AGPRToArchVGPRSpill) {
+  const Function &F = MF.getFunction();
+  const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
+  setRegLimits(ST.getMaxNumSGPRs(F), ST.getMaxNumVGPRs(F), ST);
+}
+
+GCNRPTarget::GCNRPTarget(unsigned NumSGPRs, unsigned NumVGPRs,
+                         const GCNSubtarget &ST, const GCNRegPressure &RP,
+                         bool AGPRToArchVGPRSpill)
+    : RP(RP), AGPRToArchVGPRSpill(AGPRToArchVGPRSpill) {
+  setRegLimits(NumSGPRs, NumVGPRs, ST);
+}
+
+GCNRPTarget::GCNRPTarget(unsigned Occupancy, const GCNSubtarget &ST,
+                         const GCNRegPressure &RP, bool AGPRToArchVGPRSpill)
+    : GCNRPTarget(ST.getMaxNumSGPRs(Occupancy, false),
+                  ST.getMaxNumVGPRs(Occupancy), ST, RP, AGPRToArchVGPRSpill) {}
+
+void GCNRPTarget::setRegLimits(unsigned NumSGPRs, unsigned NumVGPRs,
+                               const GCNSubtarget &ST) {
+  MaxSGPRs = NumSGPRs;
+
+  // Compute excess ArchVGPR/AGPR/VGPR pressure.
+  if (ST.hasGFX90AInsts()) {
+    // Unified RF. ArchVGPR/AGPR usage must be within addresable limits, overall
+    // VGPR usage is limited by target.
+    MaxVGPRs = std::min(ST.getAddressableNumArchVGPRs(), NumVGPRs);
+    MaxUnifiedVGPRs = NumVGPRs;
+  } else {
+    // Non-unified RF. ArchVGPR/AGPR usage limits are identical and independent.
+    MaxVGPRs = NumVGPRs;
+    MaxUnifiedVGPRs = 0;
+  }
+}
+
+bool GCNRPTarget::isSaveBeneficial(Register Reg, LaneBitmask Mask,
+                                   const MachineRegisterInfo &MRI) const {
+  const TargetRegisterClass *RC = MRI.getRegClass(Reg);
+  const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
+  const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
+
+  if (SRI->isSGPRClass(RC)) {
+    // Only save if we haven't reached the SGPR target.
+    if (RP.getSGPRNum() <= MaxSGPRs)
+      return false;
+  } else if (SRI->isAGPRClass(RC)) {
+    // Only save if we haven't reached the AGPR target, or the generic VGPR
+    // target in the unified RF case.
+    if (RP.getAGPRNum() <= MaxVGPRs &&
+        (!MaxUnifiedVGPRs || RP.getVGPRNum(true) <= MaxUnifiedVGPRs))
+      return false;
+  } else {
+    // Only save if we haven't reached the ArchVGPR target, or the generic VGPR
+    // target in the unified RF case, or the AGPR target if we allow spilling
+    // AGPRs to ArchVGPRs.
+    if (RP.getArchVGPRNum() <= MaxVGPRs &&
+        (!MaxUnifiedVGPRs || RP.getVGPRNum(true) <= MaxUnifiedVGPRs) &&
+        (!AGPRToArchVGPRSpill || RP.getAGPRNum() <= MaxVGPRs))
+      return false;
+  }
+  return true;
+}
+
+bool GCNRPTarget::satisfied() const {
+  if (RP.getSGPRNum() > MaxSGPRs || RP.getArchVGPRNum() > MaxVGPRs ||
+      (MaxUnifiedVGPRs && RP.getVGPRNum(true) > MaxUnifiedVGPRs))
+    return false;
+
+  unsigned AGPRNum = RP.getAGPRNum();
+  if (AGPRToArchVGPRSpill)
+    AGPRNum -= std::min(AGPRNum, MaxVGPRs - RP.getArchVGPRNum());
+  return AGPRNum <= MaxVGPRs;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // GCNRPTracker
 
