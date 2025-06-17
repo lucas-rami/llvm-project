@@ -375,7 +375,7 @@ void GCNRPTarget::setRegLimits(unsigned NumSGPRs, unsigned NumVGPRs,
   }
 }
 
-bool GCNRPTarget::isSaveBeneficial(Register Reg, LaneBitmask Mask,
+bool GCNRPTarget::isSaveBeneficial(Register Reg,
                                    const MachineRegisterInfo &MRI) const {
   const TargetRegisterClass *RC = MRI.getRegClass(Reg);
   const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();

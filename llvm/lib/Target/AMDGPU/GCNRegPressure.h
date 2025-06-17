@@ -165,19 +165,14 @@ inline GCNRegPressure operator-(const GCNRegPressure &P1,
 /// savings against that target from a starting GCNRegPressure.
 class GCNRPTarget {
 public:
-  /// Current register pressure.
-  GCNRegPressure RP;
+  struct Benefit {
+    GCNRegPressure::RegKind Kind;
+    // Use very negative value to indicate that a save would make the RP no
+    // longer satisfy the target.
+    int Value = 0;
 
-  /// Target number of SGPRs.
-  unsigned MaxSGPRs;
-  /// Target number of ArchVGPRs and AGPRs.
-  unsigned MaxVGPRs;
-  /// Target number of overall VGPRs for subtargets with unified RFs. Always 0
-  /// for subtargets with non-unified RFs.
-  unsigned MaxUnifiedVGPRs;
-  /// Whether to allow free ArchVGPR slots to be used to spill AGPRs to in
-  /// pressure calculations.
-  bool AGPRToArchVGPRSpill;
+    Benefit(GCNRegPressure::RegKind Kind) : Kind(Kind) {}
+  };
 
   /// Sets up the target such that the register pressure starting at \p RP does
   /// not show register spilling on function \p MF (w.r.t. the function's
@@ -197,10 +192,13 @@ public:
   GCNRPTarget(unsigned Occupancy, const GCNSubtarget &ST,
               const GCNRegPressure &RP, bool AGPRToArchVGPRSpill = false);
 
-  /// Determines whether saving virtual register \p Reg with lanemask \p Mask
-  /// will be beneficial towards achieving the RP target.
-  bool isSaveBeneficial(Register Reg, LaneBitmask Mask,
-                        const MachineRegisterInfo &MRI) const;
+  const GCNRegPressure &getCurrentRP() const { return RP; }
+
+  void setPressure(const GCNRegPressure &NewRP) { RP = NewRP; }
+
+  /// Determines whether saving virtual register \p Reg will be beneficial
+  /// towards achieving the RP target.
+  bool isSaveBeneficial(Register Reg, const MachineRegisterInfo &MRI) const;
 
   /// Saves virtual register \p Reg with lanemask \p Mask.
   void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
@@ -225,6 +223,20 @@ public:
 #endif
 
 private:
+  /// Current register pressure.
+  GCNRegPressure RP;
+
+  /// Target number of SGPRs.
+  unsigned MaxSGPRs;
+  /// Target number of ArchVGPRs and AGPRs.
+  unsigned MaxVGPRs;
+  /// Target number of overall VGPRs for subtargets with unified RFs. Always 0
+  /// for subtargets with non-unified RFs.
+  unsigned MaxUnifiedVGPRs;
+  /// Whether to allow free ArchVGPR slots to be used to spill AGPRs to in
+  /// pressure calculations.
+  bool AGPRToArchVGPRSpill;
+
   void setRegLimits(unsigned MaxSGPRs, unsigned MaxVGPRs,
                     const GCNSubtarget &ST);
 };
