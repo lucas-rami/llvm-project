@@ -217,7 +217,6 @@ public:
     if (Target.MaxUnifiedVGPRs)
       OS << ", " << Target.RP.getVGPRNum(true) << '/' << Target.MaxUnifiedVGPRs
          << " VGPRs (unified)";
-    OS << '\n';
     return OS;
   }
 #endif

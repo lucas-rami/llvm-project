@@ -1182,7 +1182,7 @@ bool PreRARematStage::initGCNSchedStage() {
     } else {
       REMAT_DEBUG(dbgs() << "Target regions:\n");
       for (unsigned I : TargetRegions.set_bits())
-        REMAT_DEBUG(dbgs() << "  [" << I << "] " << RPTargets[I]);
+        REMAT_DEBUG(dbgs() << "  [" << I << "] " << RPTargets[I] << '\n');
     }
   };
   PrintTargetRegions();
@@ -1291,14 +1291,22 @@ bool PreRARematStage::initGCNSchedStage() {
 
   // Commit all pressure changes to the DAG and compute minimum achieved
   // occupancy in impacted regions.
+  REMAT_DEBUG(dbgs() << "==== REMAT RESULTS ====\n");
   AchievedOcc = TargetOcc;
   for (unsigned I : RescheduleRegions.set_bits()) {
     const GCNRegPressure &NewRP = RPTargets[I].getCurrentRP();
     AchievedOcc = std::min(AchievedOcc, NewRP.getOccupancy(ST));
     DAG.Pressure[I] = NewRP;
-    REMAT_DEBUG(dbgs() << "[" << I << "] Achieved occupancy "
+    REMAT_DEBUG(dbgs() << "  [" << I << "] Achieved occupancy "
                        << NewRP.getOccupancy(ST) << " (" << RPTargets[I]
                        << ")\n");
+
+    // Regions which ended up empty or with a single instruction don't actually
+    // need to be rescheduled.
+    const RegionBoundaries &RegionBounds = DAG.Regions[I];
+    if (RegionBounds.first == RegionBounds.second ||
+        std::next(RegionBounds.first) == RegionBounds.second)
+      RescheduleRegions.reset(I);
   }
 
   REMAT_DEBUG(
@@ -1310,6 +1318,7 @@ bool PreRARematStage::initGCNSchedStage() {
     SIMachineFunctionInfo &MFI = *MF.getInfo<SIMachineFunctionInfo>();
     MFI.increaseOccupancy(MF, DAG.MinOccupancy);
   }
+
   return true;
 }
 
