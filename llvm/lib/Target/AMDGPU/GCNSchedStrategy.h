@@ -183,38 +183,11 @@ public:
 };
 
 inline raw_ostream &operator<<(raw_ostream &OS, const ScheduleMetrics &Sm) {
-  dbgs() << "\n Schedule Metric (scaled by "
-         << ScheduleMetrics::ScaleFactor
+  dbgs() << "\n Schedule Metric (scaled by " << ScheduleMetrics::ScaleFactor
          << " ) is: " << Sm.getMetric() << " [ " << Sm.getBubbles() << "/"
          << Sm.getLength() << " ]\n";
   return OS;
 }
-
-class GCNScheduleDAGMILive;
-class RegionPressureMap {
-  GCNScheduleDAGMILive *DAG;
-  // The live in/out pressure as indexed by the first or last MI in the region
-  // before scheduling.
-  DenseMap<MachineInstr *, GCNRPTracker::LiveRegSet> RegionLiveRegMap;
-  // The mapping of RegionIDx to key instruction
-  DenseMap<unsigned, MachineInstr *> IdxToInstruction;
-  // Whether we are calculating LiveOuts or LiveIns
-  bool IsLiveOut;
-
-public:
-  RegionPressureMap() {}
-  RegionPressureMap(GCNScheduleDAGMILive *GCNDAG, bool LiveOut)
-      : DAG(GCNDAG), IsLiveOut(LiveOut) {}
-  // Build the Instr->LiveReg and RegionIdx->Instr maps
-  void buildLiveRegMap();
-
-  // Retrieve the LiveReg for a given RegionIdx
-  GCNRPTracker::LiveRegSet &getLiveRegsForRegionIdx(unsigned RegionIdx) {
-    assert(IdxToInstruction.contains(RegionIdx));
-    MachineInstr *Key = IdxToInstruction[RegionIdx];
-    return RegionLiveRegMap[Key];
-  }
-};
 
 /// A region's boundaries i.e. a pair of instruction bundle iterators. The lower
 /// boundary is inclusive, the upper boundary is exclusive.
@@ -228,7 +201,6 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   friend class ClusteredLowOccStage;
   friend class PreRARematStage;
   friend class ILPInitialScheduleStage;
-  friend class RegionPressureMap;
 
   const GCNSubtarget &ST;
 
@@ -259,6 +231,9 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   // Region live-in cache.
   SmallVector<GCNRPTracker::LiveRegSet, 32> LiveIns;
 
+  // Region live-out cache.
+  SmallVector<GCNRPTracker::LiveRegSet, 32> LiveOuts;
+
   // Region pressure cache.
   SmallVector<GCNRegPressure, 32> Pressure;
 
@@ -272,15 +247,8 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   // registers
   DenseMap<MachineInstr *, GCNRPTracker::LiveRegSet> getRegionLiveInMap() const;
 
-  // Calculate the map of the initial last region instruction to region live out
-  // registers
-  DenseMap<MachineInstr *, GCNRPTracker::LiveRegSet>
-  getRegionLiveOutMap() const;
-
-  // The live out registers per region. These are internally stored as a map of
-  // the initial last region instruction to region live out registers, but can
-  // be retreived with the regionIdx by calls to getLiveRegsForRegionIdx.
-  RegionPressureMap RegionLiveOuts;
+  /// Updates the set of \ref LiveOuts in all regions.  
+  void updateRegionLiveOuts();
 
   // Return current region pressure.
   GCNRegPressure getRealRegPressure(unsigned RegionIdx) const;
@@ -459,8 +427,9 @@ private:
     RematInstruction(MachineInstr *UseMI) : UseMI(UseMI) {}
   };
 
-  /// Maps all MIs to their parent region. MI terminators are considered to be
-  /// outside the region they delimitate, and as such are not stored in the map.
+  /// Maps all MIs (except lone terminators, which are not part of any region)
+  /// to their parent region. Non-lone terminators are considered part of the
+  /// region they delimitate.
   DenseMap<MachineInstr *, unsigned> MIRegion;
   /// Parent MBB to each region, in region order.
   SmallVector<MachineBasicBlock *> RegionBB;
@@ -470,7 +439,7 @@ private:
   /// rematerializations.
   DenseMap<unsigned, GCNRegPressure> ImpactedRegions;
   /// In case we need to rollback rematerializations, save lane masks for all
-  /// rematerialized registers in all regions in which they are live-ins.
+  /// rematerialized registers in all regions in which they are live.
   DenseMap<std::pair<unsigned, Register>, LaneBitmask> RegMasks;
   /// After successful stage initialization, indicates which regions should be
   /// rescheduled.

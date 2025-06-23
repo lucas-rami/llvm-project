@@ -754,8 +754,7 @@ GCNScheduleDAGMILive::GCNScheduleDAGMILive(
     MachineSchedContext *C, std::unique_ptr<MachineSchedStrategy> S)
     : ScheduleDAGMILive(C, std::move(S)), ST(MF.getSubtarget<GCNSubtarget>()),
       MFI(*MF.getInfo<SIMachineFunctionInfo>()),
-      StartingOccupancy(MFI.getOccupancy()), MinOccupancy(StartingOccupancy),
-      RegionLiveOuts(this, /*IsLiveOut=*/true) {
+      StartingOccupancy(MFI.getOccupancy()), MinOccupancy(StartingOccupancy) {
 
   // We want regions with a single MI to be scheduled so that we can reason
   // about them correctly during scheduling stages that move MIs between regions
@@ -802,14 +801,6 @@ GCNScheduleDAGMILive::getRealRegPressure(unsigned RegionIdx) const {
   GCNDownwardRPTracker RPTracker(*LIS);
   RPTracker.advance(begin(), end(), &LiveIns[RegionIdx]);
   return RPTracker.moveMaxPressure();
-}
-
-static MachineInstr *getLastMIForRegion(MachineBasicBlock::iterator RegionBegin,
-                                        MachineBasicBlock::iterator RegionEnd) {
-  auto REnd = RegionEnd == RegionBegin->getParent()->end()
-                  ? std::prev(RegionEnd)
-                  : RegionEnd;
-  return &*skipDebugInstructionsBackward(REnd, RegionBegin);
 }
 
 void GCNScheduleDAGMILive::computeBlockPressure(unsigned RegionIdx,
@@ -904,29 +895,24 @@ GCNScheduleDAGMILive::getRegionLiveInMap() const {
   return getLiveRegMap(RegionFirstMIs, /*After=*/false, *LIS);
 }
 
-DenseMap<MachineInstr *, GCNRPTracker::LiveRegSet>
-GCNScheduleDAGMILive::getRegionLiveOutMap() const {
+void GCNScheduleDAGMILive::updateRegionLiveOuts() {
   assert(!Regions.empty());
   std::vector<MachineInstr *> RegionLastMIs;
   RegionLastMIs.reserve(Regions.size());
-  for (auto &[RegionBegin, RegionEnd] : reverse(Regions))
-    RegionLastMIs.push_back(getLastMIForRegion(RegionBegin, RegionEnd));
+  DenseMap<const MachineInstr *, unsigned> InstrToRegionIdx(Regions.size());
 
-  return getLiveRegMap(RegionLastMIs, /*After=*/true, *LIS);
-}
-
-void RegionPressureMap::buildLiveRegMap() {
-  IdxToInstruction.clear();
-
-  RegionLiveRegMap =
-      IsLiveOut ? DAG->getRegionLiveOutMap() : DAG->getRegionLiveInMap();
-  for (unsigned I = 0; I < DAG->Regions.size(); I++) {
-    MachineInstr *RegionKey =
-        IsLiveOut
-            ? getLastMIForRegion(DAG->Regions[I].first, DAG->Regions[I].second)
-            : &*DAG->Regions[I].first;
-    IdxToInstruction[I] = RegionKey;
+  for (auto [I, Bounds] : enumerate(Regions)) {
+    MachineBasicBlock::iterator REnd =
+        Bounds.second == Bounds.first->getParent()->end()
+            ? std::prev(Bounds.second)
+            : Bounds.second;
+    MachineInstr *LastMI = &*skipDebugInstructionsBackward(REnd, Bounds.first);
+    RegionLastMIs.push_back(LastMI);
+    InstrToRegionIdx.insert({LastMI, I});
   }
+
+  for (auto &[MI, LRS] : getLiveRegMap(RegionLastMIs, /*After=*/true, *LIS))
+    LiveOuts[InstrToRegionIdx.at(MI)] = LRS;
 }
 
 void GCNScheduleDAGMILive::finalizeSchedule() {
@@ -934,6 +920,7 @@ void GCNScheduleDAGMILive::finalizeSchedule() {
   // MachineScheduler after all regions have been recorded by
   // GCNScheduleDAGMILive::schedule().
   LiveIns.resize(Regions.size());
+  LiveOuts.resize(Regions.size());
   Pressure.resize(Regions.size());
   RegionsWithHighRP.resize(Regions.size());
   RegionsWithExcessRP.resize(Regions.size());
@@ -953,7 +940,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
   if (!Regions.empty()) {
     BBLiveInMap = getRegionLiveInMap();
     if (GCNTrackers)
-      RegionLiveOuts.buildLiveRegMap();
+      updateRegionLiveOuts();
   }
 
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
@@ -975,14 +962,10 @@ void GCNScheduleDAGMILive::runSchedStages() {
       if (GCNTrackers) {
         GCNDownwardRPTracker *DownwardTracker = S.getDownwardTracker();
         GCNUpwardRPTracker *UpwardTracker = S.getUpwardTracker();
-        GCNRPTracker::LiveRegSet *RegionLiveIns =
-            &LiveIns[Stage->getRegionIdx()];
-
         reinterpret_cast<GCNRPTracker *>(DownwardTracker)
-            ->reset(MRI, *RegionLiveIns);
+            ->reset(MRI, LiveIns[Stage->getRegionIdx()]);
         reinterpret_cast<GCNRPTracker *>(UpwardTracker)
-            ->reset(MRI, RegionLiveOuts.getLiveRegsForRegionIdx(
-                             Stage->getRegionIdx()));
+            ->reset(MRI, LiveOuts[Stage->getRegionIdx()]);
       }
 
       ScheduleDAGMILive::schedule();
@@ -1103,7 +1086,10 @@ bool PreRARematStage::initGCNSchedStage() {
     RegionBoundaries Region = DAG.Regions[I];
     for (auto MI = Region.first; MI != Region.second; ++MI)
       MIRegion.insert({&*MI, I});
-    RegionBB.push_back(Region.first->getParent());
+    MachineBasicBlock *ParentMBB = Region.first->getParent();
+    if (Region.second != ParentMBB->end())
+      MIRegion.insert({&*Region.second, I});
+    RegionBB.push_back(ParentMBB);
   }
 
   if (!canIncreaseOccupancyOrReduceSpill())
@@ -1111,8 +1097,6 @@ bool PreRARematStage::initGCNSchedStage() {
 
   // Rematerialize identified instructions and update scheduler's state.
   rematerialize();
-  if (GCNTrackers)
-    DAG.RegionLiveOuts.buildLiveRegMap();
   REMAT_DEBUG(
       dbgs() << "Retrying function scheduling with new min. occupancy of "
              << AchievedOcc << " from rematerializing (original was "
@@ -1936,7 +1920,7 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
 
   // We need up-to-date live-out info. to query live-out register masks in
   // regions containing rematerializable instructions.
-  DAG.RegionLiveOuts.buildLiveRegMap();
+  DAG.updateRegionLiveOuts();
 
   // Cache set of registers that are going to be rematerialized.
   DenseSet<unsigned> RematRegs;
@@ -1997,8 +1981,7 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
         // maximum RP in the region is reached somewhere between the defining
         // instruction and the end of the region.
         REMAT_DEBUG(dbgs() << "  Defining region is optimizable\n");
-        LaneBitmask Mask = DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I)[Reg];
-        if (ReduceRPInRegion(It, Mask, RematUseful))
+        if (ReduceRPInRegion(It, DAG.LiveOuts[I][Reg], RematUseful))
           return true;
       }
 
@@ -2064,6 +2047,7 @@ void PreRARematStage::rematerialize() {
     Remat.RematMI = &*std::prev(InsertPos);
     Remat.RematMI->getOperand(0).setSubReg(SubReg);
     DAG.LIS->InsertMachineInstrInMaps(*Remat.RematMI);
+    Register RematReg = Remat.RematMI->getOperand(0).getReg();
 
     // Update region boundaries in regions we sinked from (remove defining MI)
     // and to (insert MI rematerialized in use block). Only then we can erase
@@ -2113,13 +2097,16 @@ void PreRARematStage::rematerialize() {
 #endif
 
       // The register is no longer a live-in in all regions but the one that
-      // contains the single use. In live-through regions, maximum register
-      // pressure decreases predictably so we can directly update it. In the
-      // using region, maximum RP may or may not decrease, so we will mark it
-      // for re-computation after all materializations have taken place.
+      // contains the single use and is not a live-out anywhere. In live-through
+      // regions, maximum register pressure decreases predictably so we can
+      // directly update it. In the using region, maximum RP may or may not
+      // decrease, so we will mark it for re-computation after all
+      // materializations have taken place.
       LaneBitmask PrevMask = RegionLiveIns[Reg];
       RegionLiveIns.erase(Reg);
-      RegMasks.insert({{I, Remat.RematMI->getOperand(0).getReg()}, PrevMask});
+      if (GCNTrackers && UseRegion != MIRegion.end() && I != UseRegion->second)
+        DAG.LiveOuts[I].erase(Reg);
+      RegMasks.insert({{I, RematReg}, PrevMask});
       if (Remat.UseMI->getParent() != DAG.Regions[I].first->getParent())
         DAG.Pressure[I].inc(Reg, PrevMask, LaneBitmask::getNone(), DAG.MRI);
       else
@@ -2129,9 +2116,13 @@ void PreRARematStage::rematerialize() {
     // not decrease.
     ImpactedRegions.insert({DefRegion, DAG.Pressure[DefRegion]});
     RecomputeRP.insert(DefRegion);
+    if (GCNTrackers) {
+      GCNRPTracker::LiveRegSet &DefLiveOuts = DAG.LiveOuts[DefRegion];
+      RegMasks.insert({{DefRegion, Reg}, DefLiveOuts[Reg]});
+      DefLiveOuts.erase(Reg);
+    }
 
     // Recompute live interval to reflect the register's rematerialization.
-    Register RematReg = Remat.RematMI->getOperand(0).getReg();
     DAG.LIS->removeInterval(RematReg);
     DAG.LIS->createAndComputeVirtRegInterval(RematReg);
   }
@@ -2231,9 +2222,16 @@ void PreRARematStage::finalizeGCNSchedStage() {
     DAG.LIS->removeInterval(Reg);
     DAG.LIS->createAndComputeVirtRegInterval(Reg);
 
-    // Re-add the register as a live-in in all regions it used to be one in.
-    for (unsigned LIRegion : Remat.LiveInRegions)
+    // Re-add the register as a live-in and live-out in all regions it used to
+    // be one in.
+    for (unsigned LIRegion : Remat.LiveInRegions) {
       DAG.LiveIns[LIRegion].insert({Reg, RegMasks.at({LIRegion, Reg})});
+      if (GCNTrackers && UseRegion != MIRegion.end() &&
+          LIRegion != UseRegion->second)
+        DAG.LiveOuts[LIRegion].insert({Reg, RegMasks.at({LIRegion, Reg})});
+    }
+    if (GCNTrackers)
+      DAG.LiveOuts[DefRegion].insert({Reg, RegMasks.at({DefRegion, Reg})});
   }
 
   // Reset RP in all impacted regions.
