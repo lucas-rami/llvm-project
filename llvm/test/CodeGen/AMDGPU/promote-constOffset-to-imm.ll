@@ -490,8 +490,8 @@ define hidden amdgpu_kernel void @clmem_read(ptr addrspace(1)  %buffer) {
 ; GFX900-NEXT:    s_swappc_b64 s[30:31], s[4:5]
 ; GFX900-NEXT:    v_and_b32_e32 v1, 0xff, v0
 ; GFX900-NEXT:    v_lshlrev_b32_e32 v0, 17, v0
-; GFX900-NEXT:    v_and_b32_e32 v6, 0xfe000000, v0
-; GFX900-NEXT:    v_lshl_or_b32 v0, v1, 3, v6
+; GFX900-NEXT:    v_and_b32_e32 v10, 0xfe000000, v0
+; GFX900-NEXT:    v_lshl_or_b32 v0, v1, 3, v10
 ; GFX900-NEXT:    v_mov_b32_e32 v1, s35
 ; GFX900-NEXT:    v_add_co_u32_e32 v0, vcc, s34, v0
 ; GFX900-NEXT:    v_addc_co_u32_e32 v1, vcc, 0, v1, vcc
@@ -500,39 +500,39 @@ define hidden amdgpu_kernel void @clmem_read(ptr addrspace(1)  %buffer) {
 ; GFX900-NEXT:    v_mov_b32_e32 v4, 0
 ; GFX900-NEXT:    v_addc_co_u32_e32 v1, vcc, 0, v1, vcc
 ; GFX900-NEXT:    v_mov_b32_e32 v5, 0
-; GFX900-NEXT:    s_movk_i32 s5, 0x7f
-; GFX900-NEXT:    s_movk_i32 s2, 0xd000
-; GFX900-NEXT:    s_movk_i32 s3, 0xe000
+; GFX900-NEXT:    s_movk_i32 s2, 0x7f
 ; GFX900-NEXT:    s_movk_i32 s4, 0xf000
 ; GFX900-NEXT:  .LBB1_1: ; %for.cond.preheader
 ; GFX900-NEXT:    ; =>This Loop Header: Depth=1
 ; GFX900-NEXT:    ; Child Loop BB1_2 Depth 2
 ; GFX900-NEXT:    v_mov_b32_e32 v3, v1
 ; GFX900-NEXT:    v_mov_b32_e32 v2, v0
-; GFX900-NEXT:    s_mov_b32 s6, 0
+; GFX900-NEXT:    s_mov_b32 s3, 0
 ; GFX900-NEXT:  .LBB1_2: ; %for.body
 ; GFX900-NEXT:    ; Parent Loop BB1_1 Depth=1
 ; GFX900-NEXT:    ; => This Inner Loop Header: Depth=2
-; GFX900-NEXT:    v_add_co_u32_e32 v7, vcc, 0xffffb000, v2
-; GFX900-NEXT:    v_addc_co_u32_e32 v8, vcc, -1, v3, vcc
-; GFX900-NEXT:    global_load_dwordx2 v[9:10], v[2:3], off offset:-4096
-; GFX900-NEXT:    global_load_dwordx2 v[11:12], v[2:3], off offset:-2048
+; GFX900-NEXT:    v_add_co_u32_e32 v11, vcc, 0xffffb000, v2
+; GFX900-NEXT:    v_addc_co_u32_e32 v12, vcc, -1, v3, vcc
+; GFX900-NEXT:    global_load_dwordx2 v[6:7], v[2:3], off offset:-4096
+; GFX900-NEXT:    global_load_dwordx2 v[8:9], v[2:3], off offset:-2048
 ; GFX900-NEXT:    v_add_co_u32_e32 v13, vcc, 0xffffc000, v2
-; GFX900-NEXT:    global_load_dwordx2 v[7:8], v[7:8], off
+; GFX900-NEXT:    global_load_dwordx2 v[11:12], v[11:12], off
 ; GFX900-NEXT:    v_addc_co_u32_e32 v14, vcc, -1, v3, vcc
 ; GFX900-NEXT:    global_load_dwordx2 v[17:18], v[13:14], off offset:-2048
 ; GFX900-NEXT:    global_load_dwordx2 v[19:20], v[13:14], off
-; GFX900-NEXT:    v_add_co_u32_e32 v15, vcc, s2, v2
+; GFX900-NEXT:    s_movk_i32 s0, 0xd000
+; GFX900-NEXT:    v_add_co_u32_e32 v15, vcc, s0, v2
+; GFX900-NEXT:    s_movk_i32 s1, 0xe000
 ; GFX900-NEXT:    v_addc_co_u32_e32 v16, vcc, -1, v3, vcc
-; GFX900-NEXT:    v_add_co_u32_e32 v13, vcc, s3, v2
+; GFX900-NEXT:    v_add_co_u32_e32 v13, vcc, s1, v2
 ; GFX900-NEXT:    global_load_dwordx2 v[15:16], v[15:16], off offset:-2048
 ; GFX900-NEXT:    v_addc_co_u32_e32 v14, vcc, -1, v3, vcc
-; GFX900-NEXT:    s_addk_i32 s6, 0x2000
-; GFX900-NEXT:    s_cmp_gt_u32 s6, 0x3fffff
+; GFX900-NEXT:    s_addk_i32 s3, 0x2000
+; GFX900-NEXT:    s_cmp_gt_u32 s3, 0x3fffff
 ; GFX900-NEXT:    s_waitcnt vmcnt(3)
-; GFX900-NEXT:    v_add_co_u32_e32 v21, vcc, v7, v4
-; GFX900-NEXT:    v_addc_co_u32_e32 v5, vcc, v8, v5, vcc
-; GFX900-NEXT:    global_load_dwordx2 v[7:8], v[13:14], off offset:-4096
+; GFX900-NEXT:    v_add_co_u32_e32 v21, vcc, v11, v4
+; GFX900-NEXT:    v_addc_co_u32_e32 v5, vcc, v12, v5, vcc
+; GFX900-NEXT:    global_load_dwordx2 v[11:12], v[13:14], off offset:-4096
 ; GFX900-NEXT:    s_waitcnt vmcnt(3)
 ; GFX900-NEXT:    v_add_co_u32_e64 v23, s[0:1], v17, v21
 ; GFX900-NEXT:    v_addc_co_u32_e64 v24, s[0:1], v18, v5, s[0:1]
@@ -551,36 +551,36 @@ define hidden amdgpu_kernel void @clmem_read(ptr addrspace(1)  %buffer) {
 ; GFX900-NEXT:    v_add_co_u32_e32 v15, vcc, v15, v19
 ; GFX900-NEXT:    v_addc_co_u32_e32 v16, vcc, v16, v20, vcc
 ; GFX900-NEXT:    s_waitcnt vmcnt(4)
-; GFX900-NEXT:    v_add_co_u32_e32 v7, vcc, v7, v15
-; GFX900-NEXT:    v_addc_co_u32_e32 v8, vcc, v8, v16, vcc
+; GFX900-NEXT:    v_add_co_u32_e32 v11, vcc, v11, v15
+; GFX900-NEXT:    v_addc_co_u32_e32 v12, vcc, v12, v16, vcc
 ; GFX900-NEXT:    s_waitcnt vmcnt(3)
-; GFX900-NEXT:    v_add_co_u32_e32 v7, vcc, v17, v7
-; GFX900-NEXT:    v_addc_co_u32_e32 v8, vcc, v18, v8, vcc
+; GFX900-NEXT:    v_add_co_u32_e32 v11, vcc, v17, v11
+; GFX900-NEXT:    v_addc_co_u32_e32 v12, vcc, v18, v12, vcc
 ; GFX900-NEXT:    s_waitcnt vmcnt(2)
-; GFX900-NEXT:    v_add_co_u32_e32 v7, vcc, v21, v7
-; GFX900-NEXT:    v_addc_co_u32_e32 v8, vcc, v22, v8, vcc
+; GFX900-NEXT:    v_add_co_u32_e32 v11, vcc, v21, v11
+; GFX900-NEXT:    v_addc_co_u32_e32 v12, vcc, v22, v12, vcc
 ; GFX900-NEXT:    s_waitcnt vmcnt(1)
-; GFX900-NEXT:    v_add_co_u32_e32 v4, vcc, v4, v7
-; GFX900-NEXT:    v_addc_co_u32_e32 v5, vcc, v5, v8, vcc
-; GFX900-NEXT:    v_add_co_u32_e32 v4, vcc, v9, v4
-; GFX900-NEXT:    v_addc_co_u32_e32 v5, vcc, v10, v5, vcc
-; GFX900-NEXT:    v_add_co_u32_e32 v4, vcc, v11, v4
-; GFX900-NEXT:    v_addc_co_u32_e32 v5, vcc, v12, v5, vcc
+; GFX900-NEXT:    v_add_co_u32_e32 v4, vcc, v4, v11
+; GFX900-NEXT:    v_addc_co_u32_e32 v5, vcc, v5, v12, vcc
+; GFX900-NEXT:    v_add_co_u32_e32 v4, vcc, v6, v4
+; GFX900-NEXT:    v_addc_co_u32_e32 v5, vcc, v7, v5, vcc
+; GFX900-NEXT:    v_add_co_u32_e32 v4, vcc, v8, v4
+; GFX900-NEXT:    v_addc_co_u32_e32 v5, vcc, v9, v5, vcc
 ; GFX900-NEXT:    s_waitcnt vmcnt(0)
 ; GFX900-NEXT:    v_add_co_u32_e32 v4, vcc, v13, v4
 ; GFX900-NEXT:    v_addc_co_u32_e32 v5, vcc, v14, v5, vcc
 ; GFX900-NEXT:    s_cbranch_scc0 .LBB1_2
 ; GFX900-NEXT:  ; %bb.3: ; %while.cond.loopexit
 ; GFX900-NEXT:    ; in Loop: Header=BB1_1 Depth=1
-; GFX900-NEXT:    s_add_i32 s0, s5, -1
-; GFX900-NEXT:    s_cmp_eq_u32 s5, 0
+; GFX900-NEXT:    s_add_i32 s0, s2, -1
+; GFX900-NEXT:    s_cmp_eq_u32 s2, 0
 ; GFX900-NEXT:    s_cbranch_scc1 .LBB1_5
 ; GFX900-NEXT:  ; %bb.4: ; in Loop: Header=BB1_1 Depth=1
-; GFX900-NEXT:    s_mov_b32 s5, s0
+; GFX900-NEXT:    s_mov_b32 s2, s0
 ; GFX900-NEXT:    s_branch .LBB1_1
 ; GFX900-NEXT:  .LBB1_5: ; %while.end
 ; GFX900-NEXT:    v_mov_b32_e32 v1, s35
-; GFX900-NEXT:    v_add_co_u32_e32 v0, vcc, s34, v6
+; GFX900-NEXT:    v_add_co_u32_e32 v0, vcc, s34, v10
 ; GFX900-NEXT:    v_addc_co_u32_e32 v1, vcc, 0, v1, vcc
 ; GFX900-NEXT:    global_store_dwordx2 v[0:1], v[4:5], off
 ; GFX900-NEXT:    s_endpgm
@@ -728,15 +728,15 @@ define hidden amdgpu_kernel void @clmem_read(ptr addrspace(1)  %buffer) {
 ; GFX90A-NEXT:    v_add_co_u32_e32 v2, vcc, s0, v1
 ; GFX90A-NEXT:    v_addc_co_u32_e32 v3, vcc, 0, v3, vcc
 ; GFX90A-NEXT:    v_pk_mov_b32 v[4:5], 0, 0
-; GFX90A-NEXT:    s_movk_i32 s3, 0x7f
-; GFX90A-NEXT:    s_movk_i32 s0, 0xd000
-; GFX90A-NEXT:    s_movk_i32 s1, 0xe000
-; GFX90A-NEXT:    s_movk_i32 s2, 0xf000
+; GFX90A-NEXT:    s_movk_i32 s0, 0x7f
+; GFX90A-NEXT:    s_movk_i32 s2, 0xd000
+; GFX90A-NEXT:    s_movk_i32 s3, 0xe000
+; GFX90A-NEXT:    s_movk_i32 s4, 0xf000
 ; GFX90A-NEXT:  .LBB1_1: ; %for.cond.preheader
 ; GFX90A-NEXT:    ; =>This Loop Header: Depth=1
 ; GFX90A-NEXT:    ; Child Loop BB1_2 Depth 2
 ; GFX90A-NEXT:    v_pk_mov_b32 v[6:7], v[2:3], v[2:3] op_sel:[0,1]
-; GFX90A-NEXT:    s_mov_b32 s4, 0
+; GFX90A-NEXT:    s_mov_b32 s1, 0
 ; GFX90A-NEXT:  .LBB1_2: ; %for.body
 ; GFX90A-NEXT:    ; Parent Loop BB1_1 Depth=1
 ; GFX90A-NEXT:    ; => This Inner Loop Header: Depth=2
@@ -749,22 +749,22 @@ define hidden amdgpu_kernel void @clmem_read(ptr addrspace(1)  %buffer) {
 ; GFX90A-NEXT:    v_addc_co_u32_e32 v15, vcc, -1, v7, vcc
 ; GFX90A-NEXT:    global_load_dwordx2 v[18:19], v[14:15], off offset:-2048
 ; GFX90A-NEXT:    global_load_dwordx2 v[20:21], v[14:15], off
-; GFX90A-NEXT:    v_add_co_u32_e32 v16, vcc, s0, v6
+; GFX90A-NEXT:    v_add_co_u32_e32 v16, vcc, s2, v6
 ; GFX90A-NEXT:    v_addc_co_u32_e32 v17, vcc, -1, v7, vcc
 ; GFX90A-NEXT:    global_load_dwordx2 v[16:17], v[16:17], off offset:-2048
-; GFX90A-NEXT:    v_add_co_u32_e32 v14, vcc, s1, v6
+; GFX90A-NEXT:    v_add_co_u32_e32 v14, vcc, s3, v6
 ; GFX90A-NEXT:    v_addc_co_u32_e32 v15, vcc, -1, v7, vcc
 ; GFX90A-NEXT:    global_load_dwordx2 v[24:25], v[14:15], off offset:-4096
 ; GFX90A-NEXT:    global_load_dwordx2 v[26:27], v[14:15], off offset:-2048
 ; GFX90A-NEXT:    global_load_dwordx2 v[28:29], v[14:15], off
-; GFX90A-NEXT:    v_add_co_u32_e32 v22, vcc, s2, v6
+; GFX90A-NEXT:    v_add_co_u32_e32 v22, vcc, s4, v6
 ; GFX90A-NEXT:    v_addc_co_u32_e32 v23, vcc, -1, v7, vcc
 ; GFX90A-NEXT:    global_load_dwordx2 v[14:15], v[22:23], off offset:-2048
 ; GFX90A-NEXT:    global_load_dwordx2 v[30:31], v[6:7], off
 ; GFX90A-NEXT:    v_add_co_u32_e32 v6, vcc, 0x10000, v6
 ; GFX90A-NEXT:    v_addc_co_u32_e32 v7, vcc, 0, v7, vcc
-; GFX90A-NEXT:    s_addk_i32 s4, 0x2000
-; GFX90A-NEXT:    s_cmp_gt_u32 s4, 0x3fffff
+; GFX90A-NEXT:    s_addk_i32 s1, 0x2000
+; GFX90A-NEXT:    s_cmp_gt_u32 s1, 0x3fffff
 ; GFX90A-NEXT:    s_waitcnt vmcnt(8)
 ; GFX90A-NEXT:    v_add_co_u32_e32 v1, vcc, v12, v4
 ; GFX90A-NEXT:    v_addc_co_u32_e32 v4, vcc, v13, v5, vcc
@@ -799,11 +799,11 @@ define hidden amdgpu_kernel void @clmem_read(ptr addrspace(1)  %buffer) {
 ; GFX90A-NEXT:    s_cbranch_scc0 .LBB1_2
 ; GFX90A-NEXT:  ; %bb.3: ; %while.cond.loopexit
 ; GFX90A-NEXT:    ; in Loop: Header=BB1_1 Depth=1
-; GFX90A-NEXT:    s_add_i32 s4, s3, -1
-; GFX90A-NEXT:    s_cmp_eq_u32 s3, 0
+; GFX90A-NEXT:    s_add_i32 s1, s0, -1
+; GFX90A-NEXT:    s_cmp_eq_u32 s0, 0
 ; GFX90A-NEXT:    s_cbranch_scc1 .LBB1_5
 ; GFX90A-NEXT:  ; %bb.4: ; in Loop: Header=BB1_1 Depth=1
-; GFX90A-NEXT:    s_mov_b32 s3, s4
+; GFX90A-NEXT:    s_mov_b32 s0, s1
 ; GFX90A-NEXT:    s_branch .LBB1_1
 ; GFX90A-NEXT:  .LBB1_5: ; %while.end
 ; GFX90A-NEXT:    v_mov_b32_e32 v1, s35

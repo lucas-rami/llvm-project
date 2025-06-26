@@ -1934,7 +1934,6 @@ define amdgpu_ps <4 x float> @test_loop_vcc(<4 x float> %in) nounwind {
 ; GFX9-W64-NEXT:    image_store v[4:7], v0, s[0:7] dmask:0xf unorm
 ; GFX9-W64-NEXT:    s_wqm_b64 exec, exec
 ; GFX9-W64-NEXT:    v_mov_b32_e32 v8, 0
-; GFX9-W64-NEXT:    s_mov_b32 s4, 0x40e00000
 ; GFX9-W64-NEXT:    s_branch .LBB35_2
 ; GFX9-W64-NEXT:  .LBB35_1: ; %body
 ; GFX9-W64-NEXT:    ; in Loop: Header=BB35_2 Depth=1
@@ -1943,9 +1942,10 @@ define amdgpu_ps <4 x float> @test_loop_vcc(<4 x float> %in) nounwind {
 ; GFX9-W64-NEXT:    s_cbranch_execz .LBB35_4
 ; GFX9-W64-NEXT:  .LBB35_2: ; %loop
 ; GFX9-W64-NEXT:    ; =>This Inner Loop Header: Depth=1
+; GFX9-W64-NEXT:    s_mov_b32 s2, 0x40e00000
 ; GFX9-W64-NEXT:    s_waitcnt vmcnt(0)
 ; GFX9-W64-NEXT:    v_mov_b32_e32 v0, v4
-; GFX9-W64-NEXT:    v_cmp_lt_f32_e32 vcc, s4, v8
+; GFX9-W64-NEXT:    v_cmp_lt_f32_e32 vcc, s2, v8
 ; GFX9-W64-NEXT:    v_mov_b32_e32 v1, v5
 ; GFX9-W64-NEXT:    v_mov_b32_e32 v2, v6
 ; GFX9-W64-NEXT:    v_mov_b32_e32 v3, v7

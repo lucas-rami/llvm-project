@@ -2013,8 +2013,8 @@ entry:
 define amdgpu_kernel void @sdwa_crash_inlineasm_def() #0 {
 ; NOSDWA-LABEL: sdwa_crash_inlineasm_def:
 ; NOSDWA:       ; %bb.0: ; %bb
-; NOSDWA-NEXT:    s_mov_b32 s0, 0xffff
 ; NOSDWA-NEXT:    s_and_b64 vcc, exec, -1
+; NOSDWA-NEXT:    s_mov_b32 s0, 0xffff
 ; NOSDWA-NEXT:  .LBB21_1: ; %bb1
 ; NOSDWA-NEXT:    ; =>This Inner Loop Header: Depth=1
 ; NOSDWA-NEXT:    ;;#ASMSTART
@@ -2030,8 +2030,8 @@ define amdgpu_kernel void @sdwa_crash_inlineasm_def() #0 {
 ;
 ; GFX89-LABEL: sdwa_crash_inlineasm_def:
 ; GFX89:       ; %bb.0: ; %bb
-; GFX89-NEXT:    s_mov_b32 s0, 0xffff
 ; GFX89-NEXT:    s_and_b64 vcc, exec, -1
+; GFX89-NEXT:    s_mov_b32 s0, 0xffff
 ; GFX89-NEXT:  .LBB21_1: ; %bb1
 ; GFX89-NEXT:    ; =>This Inner Loop Header: Depth=1
 ; GFX89-NEXT:    ;;#ASMSTART
@@ -2047,8 +2047,8 @@ define amdgpu_kernel void @sdwa_crash_inlineasm_def() #0 {
 ;
 ; GFX9-LABEL: sdwa_crash_inlineasm_def:
 ; GFX9:       ; %bb.0: ; %bb
-; GFX9-NEXT:    s_mov_b32 s0, 0xffff
 ; GFX9-NEXT:    s_and_b64 vcc, exec, -1
+; GFX9-NEXT:    s_mov_b32 s0, 0xffff
 ; GFX9-NEXT:  .LBB21_1: ; %bb1
 ; GFX9-NEXT:    ; =>This Inner Loop Header: Depth=1
 ; GFX9-NEXT:    ;;#ASMSTART

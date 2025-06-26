@@ -22,49 +22,50 @@ define amdgpu_gfx [13 x i32] @issue130120() {
 ; CHECK-NEXT:    s_add_i32 s42, s32, 16
 ; CHECK-NEXT:    s_add_i32 s43, s32, 20
 ; CHECK-NEXT:    s_add_i32 s44, s32, 24
-; CHECK-NEXT:    s_mov_b32 s46, 1
-; CHECK-NEXT:    s_movk_i32 s45, 0x990
+; CHECK-NEXT:    s_mov_b32 s45, 1
 ; CHECK-NEXT:    s_mov_b32 s48, 0
 ; CHECK-NEXT:  .LBB0_1: ; %bb3
 ; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
-; CHECK-NEXT:    s_cmp_eq_u32 s46, 0
+; CHECK-NEXT:    s_cmp_eq_u32 s45, 0
+; CHECK-NEXT:    s_movk_i32 s45, 0x990
 ; CHECK-NEXT:    s_mov_b32 s49, s48
 ; CHECK-NEXT:    s_mov_b32 s50, s48
-; CHECK-NEXT:    s_cselect_b32 s51, 0, s1
-; CHECK-NEXT:    s_cselect_b32 s55, 0, s35
+; CHECK-NEXT:    s_cselect_b32 s46, s45, 0xf0
+; CHECK-NEXT:    s_cselect_b32 s47, 0, s1
+; CHECK-NEXT:    s_cselect_b32 s54, 0, s35
 ; CHECK-NEXT:    v_dual_mov_b32 v2, s48 :: v_dual_mov_b32 v3, s49
-; CHECK-NEXT:    s_cselect_b32 s52, 0, s2
-; CHECK-NEXT:    s_cselect_b32 s56, 0, s36
-; CHECK-NEXT:    s_cselect_b32 vcc_lo, 0, s43
+; CHECK-NEXT:    s_cselect_b32 s51, 0, s2
+; CHECK-NEXT:    s_cselect_b32 s55, 0, s36
+; CHECK-NEXT:    s_cselect_b32 vcc_lo, 0, s44
 ; CHECK-NEXT:    v_mov_b32_e32 v4, s50
-; CHECK-NEXT:    s_cselect_b32 s47, s45, 0xf0
-; CHECK-NEXT:    s_cselect_b32 s53, 0, s3
-; CHECK-NEXT:    s_cselect_b32 s54, 0, s34
-; CHECK-NEXT:    s_cselect_b32 s57, 0, s37
-; CHECK-NEXT:    s_cselect_b32 s58, 0, s38
-; CHECK-NEXT:    s_cselect_b32 s59, 0, s0
-; CHECK-NEXT:    s_cselect_b32 s60, 0, s39
-; CHECK-NEXT:    s_cselect_b32 s61, 0, s40
-; CHECK-NEXT:    s_cselect_b32 s62, 0, s41
-; CHECK-NEXT:    s_cselect_b32 s63, 0, s42
-; CHECK-NEXT:    s_cselect_b32 vcc_hi, 0, s44
-; CHECK-NEXT:    s_mov_b32 s46, s48
+; CHECK-NEXT:    s_cselect_b32 s52, 0, s3
+; CHECK-NEXT:    s_cselect_b32 s53, 0, s34
+; CHECK-NEXT:    s_cselect_b32 s56, 0, s37
+; CHECK-NEXT:    s_cselect_b32 s57, 0, s38
+; CHECK-NEXT:    s_cselect_b32 s58, 0, s0
+; CHECK-NEXT:    s_cselect_b32 s59, 0, s39
+; CHECK-NEXT:    s_cselect_b32 s60, 0, s40
+; CHECK-NEXT:    s_cselect_b32 s61, 0, s41
+; CHECK-NEXT:    s_cselect_b32 s62, 0, s42
+; CHECK-NEXT:    s_cselect_b32 s63, 0, s43
+; CHECK-NEXT:    s_mov_b32 s45, s48
+; CHECK-NEXT:    s_add_i32 s46, s32, s46
+; CHECK-NEXT:    scratch_store_b32 off, v0, s47
 ; CHECK-NEXT:    scratch_store_b32 off, v0, s51
 ; CHECK-NEXT:    scratch_store_b32 off, v0, s52
 ; CHECK-NEXT:    scratch_store_b32 off, v0, s53
 ; CHECK-NEXT:    scratch_store_b32 off, v0, s54
-; CHECK-NEXT:    scratch_store_b32 off, v0, s55
-; CHECK-NEXT:    scratch_store_b64 off, v[0:1], s56
-; CHECK-NEXT:    scratch_store_b32 off, v0, s57
-; CHECK-NEXT:    scratch_store_b32 off, v0, s47
+; CHECK-NEXT:    scratch_store_b64 off, v[0:1], s55
+; CHECK-NEXT:    scratch_store_b32 off, v0, s56
+; CHECK-NEXT:    scratch_store_b32 off, v0, s46
+; CHECK-NEXT:    scratch_store_b96 off, v[2:4], s57
 ; CHECK-NEXT:    scratch_store_b96 off, v[2:4], s58
-; CHECK-NEXT:    scratch_store_b96 off, v[2:4], s59
+; CHECK-NEXT:    scratch_store_b32 off, v0, s59
 ; CHECK-NEXT:    scratch_store_b32 off, v0, s60
 ; CHECK-NEXT:    scratch_store_b32 off, v0, s61
 ; CHECK-NEXT:    scratch_store_b32 off, v0, s62
 ; CHECK-NEXT:    scratch_store_b32 off, v0, s63
 ; CHECK-NEXT:    scratch_store_b32 off, v0, vcc_lo
-; CHECK-NEXT:    scratch_store_b32 off, v0, vcc_hi
 ; CHECK-NEXT:    s_mov_b32 vcc_lo, exec_lo
 ; CHECK-NEXT:    s_cbranch_vccnz .LBB0_1
 ; CHECK-NEXT:  ; %bb.2: ; %DummyReturnBlock

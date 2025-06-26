@@ -8,11 +8,10 @@ declare float @llvm.amdgcn.strict.wqm.f32(float)
 define amdgpu_ps void @main(i32 %arg) {
 ; GFX10-LABEL: main:
 ; GFX10:       ; %bb.0: ; %bb
-; GFX10-NEXT:    v_cmp_eq_u32_e32 vcc_lo, 1, v0
-; GFX10-NEXT:    v_mov_b32_e32 v0, 0
 ; GFX10-NEXT:    s_mov_b32 s1, exec_lo
 ; GFX10-NEXT:    s_mov_b32 s4, 0
 ; GFX10-NEXT:    s_mov_b32 s2, 0
+; GFX10-NEXT:    v_cmp_eq_u32_e32 vcc_lo, 1, v0
 ; GFX10-NEXT:    s_branch .LBB0_2
 ; GFX10-NEXT:  .LBB0_1: ; in Loop: Header=BB0_2 Depth=1
 ; GFX10-NEXT:    s_waitcnt_depctr 0xffe3
@@ -26,11 +25,12 @@ define amdgpu_ps void @main(i32 %arg) {
 ; GFX10-NEXT:    s_and_saveexec_b32 s3, s1
 ; GFX10-NEXT:    s_cbranch_execz .LBB0_1
 ; GFX10-NEXT:  ; %bb.3: ; in Loop: Header=BB0_2 Depth=1
-; GFX10-NEXT:    v_mbcnt_lo_u32_b32 v1, exec_lo, 0
-; GFX10-NEXT:    v_cmp_eq_u32_e64 s0, 0, v1
+; GFX10-NEXT:    v_mbcnt_lo_u32_b32 v0, exec_lo, 0
+; GFX10-NEXT:    v_cmp_eq_u32_e64 s0, 0, v0
 ; GFX10-NEXT:    s_and_b32 exec_lo, exec_lo, s0
 ; GFX10-NEXT:    s_cbranch_execz .LBB0_1
 ; GFX10-NEXT:  ; %bb.4: ; in Loop: Header=BB0_2 Depth=1
+; GFX10-NEXT:    v_mov_b32_e32 v0, 0
 ; GFX10-NEXT:    s_mov_b32 s5, s4
 ; GFX10-NEXT:    s_mov_b32 s6, s4
 ; GFX10-NEXT:    s_mov_b32 s7, s4
