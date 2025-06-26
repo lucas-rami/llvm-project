@@ -1165,42 +1165,45 @@ bool PreRARematStage::initGCNSchedStage() {
     for (const RematReg &Remat : RematRegs)
       Remat.print(MIRegion);
   });
-  REMAT_DEBUG(dbgs() << "==== ALWAYS BENEFICIAL ====\n");
 
   // Compute region frequencies. Cannot directly build MFI here because of lack
   // of const in constructor.
-  assert(DAG.MLI && "MLI not defined");
+  assert(DAG.MLI && "MLI not defined in DAG");
   MachineBranchProbabilityInfo MBPI;
   MachineBlockFrequencyInfo MFI;
   MFI.calculate(MF, MBPI, *DAG.MLI);
-  BitVector RegionsNoFreq(NumRegions);
   uint64_t MaxFreq = 0;
+  uint64_t EntryFreq = MFI.getEntryFreq().getFrequency();
   for (const MachineBasicBlock *MBB : RegionBB) {
-    unsigned BlockFreq = MFI.getBlockFreq(MBB).getFrequency();
-    uint64_t Freq = BlockFreq / MFI.getEntryFreq().getFrequency();
+    uint64_t Freq =
+        EntryFreq ? MFI.getBlockFreq(MBB).getFrequency() / EntryFreq : 0;
     RegionFreq.push_back(Freq);
     MaxFreq = std::max(MaxFreq, Freq);
   }
+  REMAT_DEBUG({
+    dbgs() << "Region frequencies:\n";
+    for (auto [I, Freq] : enumerate(RegionFreq)) {
+      REMAT_DEBUG(dbgs() << "  [" << I << "] ");
+      if (Freq)
+        LLVM_DEBUG(dbgs() << Freq << '\n');
+      else
+        LLVM_DEBUG(dbgs() << "unknown, assuming " << MaxFreq + 1 << '\n');
+    }
+  });
+
   // Assume a higher than everywhere frequency in regions where we couldn't
-  // determine the frequency. This generally makes rematerialization more
-  // conservative by, for example, preventing any register used in a region of
-  // unknown frequency to be considered as always beneficial to rematerialize.
+  // determine the frequency.
+  // FIXME: This is not ideal. Even in always beneficial cases, if both def an
+  // use regions have unknown frequencies they will end up with the same
+  // frequency estimation and therefore will be rematerialized.
   for (uint64_t &Freq : RegionFreq) {
     if (!Freq)
       Freq = MaxFreq + 1;
   }
 
-  auto UpdateTargetRegions = [&](const BitVector &Regions) {
-    for (unsigned I : Regions.set_bits()) {
-      if (TargetRegions[I] && RPTargets[I].satisfied()) {
-        REMAT_DEBUG(dbgs() << "  [" << I << "] Target reached!\n");
-        TargetRegions.reset(I);
-      }
-    }
-  };
-
   // Start by rematerializing always beneficial instructions. These should never
   // be rollbacked.
+  REMAT_DEBUG(dbgs() << "==== ALWAYS BENEFICIAL ====\n");
   SmallVector<ScoredRemat> ScoredRematInstrs;
   BitVector RecomputeRP(NumRegions);
   for (const RematReg &Remat : RematRegs) {
@@ -1211,6 +1214,15 @@ bool PreRARematStage::initGCNSchedStage() {
       ScoredRematInstrs.emplace_back(&Remat, *this);
     }
   }
+
+  auto UpdateTargetRegions = [&](const BitVector &Regions) {
+    for (unsigned I : Regions.set_bits()) {
+      if (TargetRegions[I] && RPTargets[I].satisfied()) {
+        REMAT_DEBUG(dbgs() << "  [" << I << "] Target reached!\n");
+        TargetRegions.reset(I);
+      }
+    }
+  };
   UpdateTargetRegions(RescheduleRegions);
 
 #ifndef NDEBUG
