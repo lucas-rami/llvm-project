@@ -595,15 +595,15 @@ define amdgpu_kernel void @v32i8_loop_carried(ptr addrspace(1) %src1, ptr addrsp
 ; GFX906-NEXT:    s_waitcnt vmcnt(0)
 ; GFX906-NEXT:    v_lshlrev_b32_sdwa v0, v3, v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:BYTE_2
 ; GFX906-NEXT:    v_and_or_b32 v0, v1, v2, v0
+; GFX906-NEXT:    v_mov_b32_e32 v2, 24
 ; GFX906-NEXT:  .LBB10_1: ; %bb.1
 ; GFX906-NEXT:    ; =>This Inner Loop Header: Depth=1
-; GFX906-NEXT:    v_and_b32_e32 v2, 0xff, v1
-; GFX906-NEXT:    v_mov_b32_e32 v3, 24
+; GFX906-NEXT:    v_and_b32_e32 v3, 0xff, v1
 ; GFX906-NEXT:    s_and_b64 s[2:3], exec, vcc
-; GFX906-NEXT:    v_lshlrev_b32_e32 v2, 16, v2
-; GFX906-NEXT:    v_lshlrev_b32_sdwa v1, v3, v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:BYTE_2
+; GFX906-NEXT:    v_lshlrev_b32_e32 v3, 16, v3
+; GFX906-NEXT:    v_lshlrev_b32_sdwa v1, v2, v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:BYTE_2
 ; GFX906-NEXT:    s_or_b64 s[0:1], s[2:3], s[0:1]
-; GFX906-NEXT:    v_or3_b32 v1, v0, v2, v1
+; GFX906-NEXT:    v_or3_b32 v1, v0, v3, v1
 ; GFX906-NEXT:    s_andn2_b64 exec, exec, s[0:1]
 ; GFX906-NEXT:    s_cbranch_execnz .LBB10_1
 ; GFX906-NEXT:  ; %bb.2: ; %bb.2.loopexit

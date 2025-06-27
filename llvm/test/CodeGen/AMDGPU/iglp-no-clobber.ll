@@ -9,17 +9,17 @@ define amdgpu_kernel void @func(ptr addrspace(1) %in, ptr addrspace(3) %out) {
 ; CHECK:       ; %bb.0: ; %.lr.ph
 ; CHECK-NEXT:    s_load_dwordx2 s[6:7], s[4:5], 0x0
 ; CHECK-NEXT:    s_mov_b64 s[8:9], 0
+; CHECK-NEXT:    s_mov_b64 s[10:11], 0
 ; CHECK-NEXT:    s_mov_b32 s3, 32
 ; CHECK-NEXT:    s_mov_b32 s2, 0
-; CHECK-NEXT:    s_mov_b64 s[10:11], 0
+; CHECK-NEXT:    s_mov_b64 s[12:13], 0
 ; CHECK-NEXT:  .LBB0_1: ; %loop
 ; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
-; CHECK-NEXT:    s_mov_b64 s[0:1], s[8:9]
+; CHECK-NEXT:    s_mov_b64 s[0:1], s[10:11]
 ; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
-; CHECK-NEXT:    s_add_u32 s8, s6, s10
-; CHECK-NEXT:    s_addc_u32 s9, s7, s11
-; CHECK-NEXT:    s_mov_b64 s[10:11], 0
-; CHECK-NEXT:    s_load_dwordx2 s[10:11], s[10:11], 0x0
+; CHECK-NEXT:    s_add_u32 s10, s6, s12
+; CHECK-NEXT:    s_addc_u32 s11, s7, s13
+; CHECK-NEXT:    s_load_dwordx2 s[12:13], s[8:9], 0x0
 ; CHECK-NEXT:    s_add_i32 s3, s3, -1
 ; CHECK-NEXT:    s_cmp_lg_u32 s3, 0
 ; CHECK-NEXT:    ; iglp_opt mask(0x00000000)

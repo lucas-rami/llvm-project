@@ -671,6 +671,7 @@ define amdgpu_kernel void @v32i8_loop_carried(ptr addrspace(1) %src1, ptr addrsp
 ; GFX942-NEXT:    v_and_b32_e32 v1, 0x3ff, v0
 ; GFX942-NEXT:    v_lshlrev_b32_e32 v0, 5, v1
 ; GFX942-NEXT:    v_cmp_lt_u32_e32 vcc, 14, v1
+; GFX942-NEXT:    s_mov_b32 s2, 0x2000604
 ; GFX942-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX942-NEXT:    global_load_dword v0, v0, s[0:1]
 ; GFX942-NEXT:    s_mov_b64 s[0:1], 0
@@ -678,9 +679,8 @@ define amdgpu_kernel void @v32i8_loop_carried(ptr addrspace(1) %src1, ptr addrsp
 ; GFX942-NEXT:    v_mov_b32_e32 v1, v0
 ; GFX942-NEXT:  .LBB12_1: ; %bb.1
 ; GFX942-NEXT:    ; =>This Inner Loop Header: Depth=1
-; GFX942-NEXT:    s_and_b64 s[2:3], exec, vcc
-; GFX942-NEXT:    s_or_b64 s[0:1], s[2:3], s[0:1]
-; GFX942-NEXT:    s_mov_b32 s2, 0x2000604
+; GFX942-NEXT:    s_and_b64 s[6:7], exec, vcc
+; GFX942-NEXT:    s_or_b64 s[0:1], s[6:7], s[0:1]
 ; GFX942-NEXT:    v_perm_b32 v1, v0, v1, s2
 ; GFX942-NEXT:    s_andn2_b64 exec, exec, s[0:1]
 ; GFX942-NEXT:    s_cbranch_execnz .LBB12_1

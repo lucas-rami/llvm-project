@@ -1141,8 +1141,8 @@ define void @move_to_valu_vgpr_operand_phi(ptr addrspace(3) %out) {
 ; SI:       ; %bb.0: ; %bb0
 ; SI-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
 ; SI-NEXT:    v_add_i32_e32 v0, vcc, 28, v0
-; SI-NEXT:    s_and_b64 vcc, exec, 0
 ; SI-NEXT:    v_mov_b32_e32 v1, 1
+; SI-NEXT:    s_and_b64 vcc, exec, 0
 ; SI-NEXT:    s_mov_b32 m0, -1
 ; SI-NEXT:    s_branch .LBB20_2
 ; SI-NEXT:  .LBB20_1: ; %bb3
@@ -1168,8 +1168,8 @@ define void @move_to_valu_vgpr_operand_phi(ptr addrspace(3) %out) {
 ; VI:       ; %bb.0: ; %bb0
 ; VI-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
 ; VI-NEXT:    v_add_u32_e32 v0, vcc, 28, v0
-; VI-NEXT:    s_and_b64 vcc, exec, 0
 ; VI-NEXT:    v_mov_b32_e32 v1, 1
+; VI-NEXT:    s_and_b64 vcc, exec, 0
 ; VI-NEXT:    s_mov_b32 m0, -1
 ; VI-NEXT:    s_branch .LBB20_2
 ; VI-NEXT:  .LBB20_1: ; %bb3

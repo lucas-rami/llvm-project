@@ -12,12 +12,11 @@ define amdgpu_kernel void @sgpr_if_else_salu_br(ptr addrspace(1) %out, i32 %a, i
 ; SI-LABEL: sgpr_if_else_salu_br:
 ; SI:       ; %bb.0: ; %entry
 ; SI-NEXT:    s_load_dwordx4 s[0:3], s[4:5], 0xb
+; SI-NEXT:    s_load_dword s6, s[4:5], 0xf
 ; SI-NEXT:    s_waitcnt lgkmcnt(0)
 ; SI-NEXT:    s_cmp_lg_u32 s0, 0
 ; SI-NEXT:    s_cbranch_scc0 .LBB0_4
 ; SI-NEXT:  ; %bb.1: ; %else
-; SI-NEXT:    s_load_dword s6, s[4:5], 0xf
-; SI-NEXT:    s_waitcnt lgkmcnt(0)
 ; SI-NEXT:    s_add_i32 s3, s3, s6
 ; SI-NEXT:    s_cbranch_execnz .LBB0_3
 ; SI-NEXT:  .LBB0_2: ; %if

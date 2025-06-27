@@ -12,7 +12,7 @@ define amdgpu_kernel void @negated_cond(ptr addrspace(1) %arg1) {
 ; GCN-NEXT:    s_waitcnt lgkmcnt(0)
 ; GCN-NEXT:    s_mov_b32 s8, s4
 ; GCN-NEXT:    s_mov_b32 s9, s5
-; GCN-NEXT:    v_mov_b32_e32 v2, 0
+; GCN-NEXT:    v_mov_b32_e32 v0, 0
 ; GCN-NEXT:    s_branch .LBB0_2
 ; GCN-NEXT:  .LBB0_1: ; %loop.exit.guard
 ; GCN-NEXT:    ; in Loop: Header=BB0_2 Depth=1
@@ -21,12 +21,12 @@ define amdgpu_kernel void @negated_cond(ptr addrspace(1) %arg1) {
 ; GCN-NEXT:  .LBB0_2: ; %bb1
 ; GCN-NEXT:    ; =>This Loop Header: Depth=1
 ; GCN-NEXT:    ; Child Loop BB0_4 Depth 2
-; GCN-NEXT:    buffer_load_dword v0, off, s[8:11], 0
+; GCN-NEXT:    buffer_load_dword v1, off, s[8:11], 0
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
-; GCN-NEXT:    v_cmp_ne_u32_e64 s[2:3], 0, v0
-; GCN-NEXT:    v_cmp_eq_u32_e32 vcc, 0, v0
-; GCN-NEXT:    v_cndmask_b32_e64 v0, 0, 1, vcc
-; GCN-NEXT:    v_cmp_ne_u32_e64 s[0:1], 1, v0
+; GCN-NEXT:    v_cmp_ne_u32_e64 s[2:3], 0, v1
+; GCN-NEXT:    v_cmp_eq_u32_e32 vcc, 0, v1
+; GCN-NEXT:    v_cndmask_b32_e64 v1, 0, 1, vcc
+; GCN-NEXT:    v_cmp_ne_u32_e64 s[0:1], 1, v1
 ; GCN-NEXT:    s_mov_b32 s12, s6
 ; GCN-NEXT:    s_branch .LBB0_4
 ; GCN-NEXT:  .LBB0_3: ; %Flow1
@@ -55,11 +55,11 @@ define amdgpu_kernel void @negated_cond(ptr addrspace(1) %arg1) {
 ; GCN-NEXT:  ; %bb.8: ; %bb4
 ; GCN-NEXT:    ; in Loop: Header=BB0_4 Depth=2
 ; GCN-NEXT:    s_ashr_i32 s13, s12, 31
-; GCN-NEXT:    s_mov_b64 s[14:15], 0
 ; GCN-NEXT:    s_lshl_b64 s[16:17], s[12:13], 2
-; GCN-NEXT:    v_mov_b32_e32 v0, s16
-; GCN-NEXT:    v_mov_b32_e32 v1, s17
-; GCN-NEXT:    buffer_store_dword v2, v[0:1], s[4:7], 0 addr64
+; GCN-NEXT:    s_mov_b64 s[14:15], 0
+; GCN-NEXT:    v_mov_b32_e32 v1, s16
+; GCN-NEXT:    v_mov_b32_e32 v2, s17
+; GCN-NEXT:    buffer_store_dword v0, v[1:2], s[4:7], 0 addr64
 ; GCN-NEXT:    s_cmp_eq_u32 s12, 32
 ; GCN-NEXT:    s_cselect_b64 s[16:17], -1, 0
 ; GCN-NEXT:    s_branch .LBB0_3
@@ -102,17 +102,17 @@ define amdgpu_kernel void @negated_cond_dominated_blocks(ptr addrspace(1) %arg1)
 ; GCN-NEXT:    s_cmp_lg_u32 s0, 0
 ; GCN-NEXT:    s_cselect_b64 s[0:1], -1, 0
 ; GCN-NEXT:    s_and_b64 s[0:1], exec, s[0:1]
+; GCN-NEXT:    v_mov_b32_e32 v0, 0
 ; GCN-NEXT:    s_mov_b32 s3, s6
-; GCN-NEXT:    v_mov_b32_e32 v2, 0
 ; GCN-NEXT:    s_branch .LBB1_2
 ; GCN-NEXT:  .LBB1_1: ; %bb7
 ; GCN-NEXT:    ; in Loop: Header=BB1_2 Depth=1
 ; GCN-NEXT:    s_ashr_i32 s3, s2, 31
 ; GCN-NEXT:    s_lshl_b64 s[8:9], s[2:3], 2
-; GCN-NEXT:    v_mov_b32_e32 v0, s8
-; GCN-NEXT:    v_mov_b32_e32 v1, s9
+; GCN-NEXT:    v_mov_b32_e32 v1, s8
+; GCN-NEXT:    v_mov_b32_e32 v2, s9
 ; GCN-NEXT:    s_cmp_eq_u32 s2, 32
-; GCN-NEXT:    buffer_store_dword v2, v[0:1], s[4:7], 0 addr64
+; GCN-NEXT:    buffer_store_dword v0, v[1:2], s[4:7], 0 addr64
 ; GCN-NEXT:    s_mov_b32 s3, s2
 ; GCN-NEXT:    s_cbranch_scc1 .LBB1_6
 ; GCN-NEXT:  .LBB1_2: ; %bb4

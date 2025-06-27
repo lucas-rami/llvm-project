@@ -20,16 +20,17 @@ define amdgpu_kernel void @foo(ptr addrspace(1) noalias nocapture readonly %arg,
 ; CHECK-NEXT:    s_load_dword s6, s[4:5], 0x10
 ; CHECK-NEXT:    s_load_dwordx2 s[2:3], s[4:5], 0x10
 ; CHECK-NEXT:    s_load_dword s10, s[4:5], 0x11
-; CHECK-NEXT:    v_lshlrev_b32_e32 v0, 2, v0
+; CHECK-NEXT:    v_lshlrev_b32_e32 v2, 2, v0
 ; CHECK-NEXT:    s_movk_i32 s0, 0x54
-; CHECK-NEXT:    v_mad_u32_u24 v0, v1, s0, v0
+; CHECK-NEXT:    v_mov_b32_e32 v0, 0
+; CHECK-NEXT:    v_mad_u32_u24 v1, v1, s0, v2
 ; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
 ; CHECK-NEXT:    s_bitcmp1_b32 s6, 8
 ; CHECK-NEXT:    s_cselect_b64 s[0:1], -1, 0
 ; CHECK-NEXT:    s_bitcmp1_b32 s6, 16
-; CHECK-NEXT:    v_cndmask_b32_e64 v1, 0, 1, s[0:1]
+; CHECK-NEXT:    v_cndmask_b32_e64 v2, 0, 1, s[0:1]
 ; CHECK-NEXT:    s_cselect_b64 s[4:5], -1, 0
-; CHECK-NEXT:    v_cmp_ne_u32_e64 s[0:1], 1, v1
+; CHECK-NEXT:    v_cmp_ne_u32_e64 s[0:1], 1, v2
 ; CHECK-NEXT:    s_xor_b64 s[4:5], s[4:5], -1
 ; CHECK-NEXT:    s_bitcmp1_b32 s2, 24
 ; CHECK-NEXT:    s_cselect_b64 s[6:7], -1, 0
@@ -42,18 +43,17 @@ define amdgpu_kernel void @foo(ptr addrspace(1) noalias nocapture readonly %arg,
 ; CHECK-NEXT:    s_and_b64 s[4:5], exec, s[4:5]
 ; CHECK-NEXT:    s_and_b64 s[6:7], exec, s[10:11]
 ; CHECK-NEXT:    s_and_b64 s[8:9], exec, s[8:9]
-; CHECK-NEXT:    v_mov_b32_e32 v3, 0
 ; CHECK-NEXT:    s_mov_b32 m0, -1
 ; CHECK-NEXT:  .LBB0_1: ; %.loopexit145
 ; CHECK-NEXT:    ; =>This Loop Header: Depth=1
 ; CHECK-NEXT:    ; Child Loop BB0_3 Depth 2
 ; CHECK-NEXT:    ; Child Loop BB0_4 Depth 3
 ; CHECK-NEXT:    ; Child Loop BB0_5 Depth 2
-; CHECK-NEXT:    v_mov_b32_e32 v1, v0
+; CHECK-NEXT:    v_mov_b32_e32 v2, v1
 ; CHECK-NEXT:    s_branch .LBB0_3
 ; CHECK-NEXT:  .LBB0_2: ; %.loopexit
 ; CHECK-NEXT:    ; in Loop: Header=BB0_3 Depth=2
-; CHECK-NEXT:    v_add_i32_e32 v1, vcc, 0x540, v1
+; CHECK-NEXT:    v_add_i32_e32 v2, vcc, 0x540, v2
 ; CHECK-NEXT:    s_mov_b64 vcc, s[4:5]
 ; CHECK-NEXT:    s_cbranch_vccnz .LBB0_5
 ; CHECK-NEXT:  .LBB0_3: ; %bb13
@@ -61,14 +61,14 @@ define amdgpu_kernel void @foo(ptr addrspace(1) noalias nocapture readonly %arg,
 ; CHECK-NEXT:    ; => This Loop Header: Depth=2
 ; CHECK-NEXT:    ; Child Loop BB0_4 Depth 3
 ; CHECK-NEXT:    s_and_b64 vcc, exec, s[0:1]
-; CHECK-NEXT:    v_mov_b32_e32 v2, v1
+; CHECK-NEXT:    v_mov_b32_e32 v3, v2
 ; CHECK-NEXT:    s_cbranch_vccnz .LBB0_2
 ; CHECK-NEXT:  .LBB0_4: ; %bb21
 ; CHECK-NEXT:    ; Parent Loop BB0_1 Depth=1
 ; CHECK-NEXT:    ; Parent Loop BB0_3 Depth=2
 ; CHECK-NEXT:    ; => This Inner Loop Header: Depth=3
-; CHECK-NEXT:    ds_write_b32 v2, v3
-; CHECK-NEXT:    v_add_i32_e32 v2, vcc, 32, v2
+; CHECK-NEXT:    ds_write_b32 v3, v0
+; CHECK-NEXT:    v_add_i32_e32 v3, vcc, 32, v3
 ; CHECK-NEXT:    s_mov_b64 vcc, s[2:3]
 ; CHECK-NEXT:    s_cbranch_vccz .LBB0_4
 ; CHECK-NEXT:    s_branch .LBB0_2
