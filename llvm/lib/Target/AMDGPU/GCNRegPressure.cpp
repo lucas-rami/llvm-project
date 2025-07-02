@@ -14,6 +14,7 @@
 #include "GCNRegPressure.h"
 #include "AMDGPU.h"
 #include "SIMachineFunctionInfo.h"
+#include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/CodeGen/RegisterPressure.h"
 
 using namespace llvm;
@@ -366,31 +367,33 @@ static LaneBitmask findUseBetween(unsigned Reg, LaneBitmask LastUseMask,
 
 GCNRPTarget::GCNRPTarget(const MachineFunction &MF, const GCNRegPressure &RP,
                          bool CombineVGPRSavings)
-    : RP(RP), CombineVGPRSavings(CombineVGPRSavings) {
+    : MF(MF), RP(RP) {
   const Function &F = MF.getFunction();
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
-  setRegLimits(ST.getMaxNumSGPRs(F), ST.getMaxNumVGPRs(F), MF);
+  setTarget(ST.getMaxNumSGPRs(F), ST.getMaxNumVGPRs(F), CombineVGPRSavings);
 }
 
 GCNRPTarget::GCNRPTarget(unsigned NumSGPRs, unsigned NumVGPRs,
                          const MachineFunction &MF, const GCNRegPressure &RP,
                          bool CombineVGPRSavings)
-    : RP(RP), CombineVGPRSavings(CombineVGPRSavings) {
-  setRegLimits(NumSGPRs, NumVGPRs, MF);
+    : MF(MF), RP(RP) {
+  setTarget(NumSGPRs, NumVGPRs, CombineVGPRSavings);
 }
 
 GCNRPTarget::GCNRPTarget(unsigned Occupancy, const MachineFunction &MF,
                          const GCNRegPressure &RP, bool CombineVGPRSavings)
-    : RP(RP), CombineVGPRSavings(CombineVGPRSavings) {
+    : MF(MF), RP(RP) {
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   unsigned DynamicVGPRBlockSize =
       MF.getInfo<SIMachineFunctionInfo>()->getDynamicVGPRBlockSize();
-  setRegLimits(ST.getMaxNumSGPRs(Occupancy, /*Addressable=*/false),
-               ST.getMaxNumVGPRs(Occupancy, DynamicVGPRBlockSize), MF);
+  setTarget(ST.getMaxNumSGPRs(Occupancy, /*Addressable=*/false),
+            ST.getMaxNumVGPRs(Occupancy, DynamicVGPRBlockSize),
+            CombineVGPRSavings);
 }
 
-void GCNRPTarget::setRegLimits(unsigned NumSGPRs, unsigned NumVGPRs,
-                               const MachineFunction &MF) {
+void GCNRPTarget::setTarget(unsigned NumSGPRs, unsigned NumVGPRs,
+                            bool CombineVGPRSavings) {
+  this->CombineVGPRSavings = CombineVGPRSavings;
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   unsigned DynamicVGPRBlockSize =
       MF.getInfo<SIMachineFunctionInfo>()->getDynamicVGPRBlockSize();
@@ -402,8 +405,8 @@ void GCNRPTarget::setRegLimits(unsigned NumSGPRs, unsigned NumVGPRs,
           : 0;
 }
 
-bool GCNRPTarget::isSaveBeneficial(Register Reg,
-                                   const MachineRegisterInfo &MRI) const {
+bool GCNRPTarget::isSaveBeneficial(Register Reg) const {
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
   const TargetRegisterClass *RC = MRI.getRegClass(Reg);
   const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
   const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
@@ -422,6 +425,21 @@ bool GCNRPTarget::satisfied() const {
       (!CombineVGPRSavings || !satisifiesVGPRBanksTarget()))
     return false;
   return satisfiesUnifiedTarget();
+}
+
+unsigned GCNRPTarget::getOccupancy() const {
+  const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
+  unsigned DynamicVGPRBlockSize =
+      MF.getInfo<SIMachineFunctionInfo>()->getDynamicVGPRBlockSize();
+  if (ST.hasGFX90AInsts() || !CombineVGPRSavings)
+    return RP.getOccupancy(ST, DynamicVGPRBlockSize);
+
+  // Instead of taking the maximum usage among the two VGPR banks, we average
+  // the usage out, doing the calculation as if RA will be able to actually
+  // balance usage perfectly later.
+  unsigned NumVGPRs = divideCeil(RP.getArchVGPRNum() + RP.getAGPRNum(), 2);
+  return std::min(ST.getOccupancyWithNumSGPRs(RP.getSGPRNum()),
+                  ST.getOccupancyWithNumVGPRs(NumVGPRs, DynamicVGPRBlockSize));
 }
 
 ///////////////////////////////////////////////////////////////////////////////

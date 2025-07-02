@@ -18,6 +18,7 @@
 #define LLVM_LIB_TARGET_AMDGPU_GCNREGPRESSURE_H
 
 #include "GCNSubtarget.h"
+#include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/RegisterPressure.h"
 #include <algorithm>
@@ -187,21 +188,32 @@ public:
   GCNRPTarget(unsigned Occupancy, const MachineFunction &MF,
               const GCNRegPressure &RP, bool CombineVGPRSavings = false);
 
+  /// Changes the target (same semantics as constructor).
+  void setTarget(unsigned NumSGPRs, unsigned NumVGPRs,
+                 bool CombineVGPRSavings = false);
+
   const GCNRegPressure &getCurrentRP() const { return RP; }
 
   void setRP(const GCNRegPressure &NewRP) { RP = NewRP; }
 
   /// Determines whether saving virtual register \p Reg will be beneficial
   /// towards achieving the RP target.
-  bool isSaveBeneficial(Register Reg, const MachineRegisterInfo &MRI) const;
+  bool isSaveBeneficial(Register Reg) const;
 
   /// Saves virtual register \p Reg with lanemask \p Mask.
-  void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
-    RP.inc(Reg, Mask, LaneBitmask::getNone(), MRI);
+  void saveReg(Register Reg, LaneBitmask Mask) {
+    RP.inc(Reg, Mask, LaneBitmask::getNone(), MF.getRegInfo());
   }
 
   /// Whether the current RP is at or below the defined pressure target.
   bool satisfied() const;
+
+  /// Determines the occupancy achievable with the current RP, which differs
+  /// from \ref GCNRegPressure::getOccupancy if and only if the target was
+  /// created with \ref CombineVGPRUsage and on a subtarget with a non-unified
+  /// RF; in such cases the returned occupancy may be higher due to the
+  /// expectation that VGPR bank usage will balance out during RA.
+  unsigned getOccupancy() const;
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   friend raw_ostream &operator<<(raw_ostream &OS, const GCNRPTarget &Target) {
@@ -222,6 +234,8 @@ public:
 #endif
 
 private:
+  const MachineFunction &MF;
+
   /// Current register pressure.
   GCNRegPressure RP;
 
@@ -234,7 +248,7 @@ private:
   unsigned MaxUnifiedVGPRs;
   /// Whether we consider that the register allocator will be able to swap
   /// between ArchVGPRs and AGPRs by copying them to a super register class.
-  /// Concretely, this allows savings in one of the VGPR banks to help toward
+  /// Concretely, this allows free registers in one VGPR bank to help toward
   /// savings in the other VGPR bank.
   bool CombineVGPRSavings;
 
@@ -252,9 +266,6 @@ private:
     return NumVGPRs > MaxVGPRs || !satisfiesUnifiedTarget() ||
            (CombineVGPRSavings && !satisifiesVGPRBanksTarget());
   }
-
-  void setRegLimits(unsigned MaxSGPRs, unsigned MaxVGPRs,
-                    const MachineFunction &MF);
 };
 
 ///////////////////////////////////////////////////////////////////////////////

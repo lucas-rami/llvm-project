@@ -464,7 +464,8 @@ private:
     bool operator==(const ScoredRemat &O) const { return Score == O.Score; }
 
   private:
-    /// Scoring parameters. Very random.
+    /// Scoring parameters.
+    /// FIXME: need a good rationale for these parameters.
     static constexpr int SaveCost = 100, RestoreCost = 100, WeightRP = 10,
                          WeightRPMaybe = 5;
 
@@ -492,14 +493,10 @@ private:
   SmallVector<GCNRPTarget> RPTargets;
   /// Regions which are below the RP target.
   BitVector TargetRegions;
-  /// Whether the stage is attempting to increase occupancy in the abscence of
-  /// spilling.
-  bool IncreaseOcc;
-  /// Target occupancy the stage estimates is reachable through
-  /// rematerialization. Greater than or equal to the pre-stage min occupancy.
-  unsigned TargetOcc;
+  /// TODO
+  std::optional<unsigned> TargetOcc;
   /// Achieved occupancy *only* through rematerializations (pre-rescheduling).
-  /// Smaller than or equal to the target occupancy.
+  /// Smaller than or equal to the target occupancy, when it is defined.
   unsigned AchievedOcc;
 
   /// List of rematerializable registers.
@@ -513,9 +510,9 @@ private:
   BitVector RescheduleRegions;
 
   /// Determines the stage's objective (increasing occupancy or reducing
-  /// spilling, set in \ref IncreaseOcc and \ref TargetOcc). Defines \ref
-  /// RPTargets in all regions to achieve that objective and mark those that
-  /// don't achieve it in \ref TargetRegions.
+  /// spilling, set in \ref TargetOcc). Defines \ref RPTargets in all regions to
+  /// achieve that objective and mark those that don't achieve it in \ref
+  /// TargetRegions.
   void setObjective();
 
   /// Returns the maximal RP in region \p I, as computed from the DAG.
@@ -557,6 +554,8 @@ private:
   /// virtual reg uses.
   bool allUsesAvailableAt(const MachineInstr *InstToRemat,
                           SlotIndex OriginalIdx, SlotIndex RematIdx) const;
+
+  inline bool hasSpillTarget() const { return !TargetOcc.has_value(); }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   void printTargetRegions() const;
