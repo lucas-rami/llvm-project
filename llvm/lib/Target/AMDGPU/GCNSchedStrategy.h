@@ -19,6 +19,7 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/MC/LaneBitmask.h"
+#include <cstdint>
 
 namespace llvm {
 
@@ -411,12 +412,33 @@ public:
 /// effects on function latency.
 class PreRARematStage : public GCNSchedStage {
 private:
+  struct RegionUses {
+    unsigned Region;
+    SmallVector<MachineInstr *, 2> Uses;
+
+    RegionUses(unsigned Region, MachineInstr *UseMI)
+        : Region(Region), Uses({UseMI}) {}
+
+    void addUse(MachineInstr &NewUseMI, const LiveIntervals &LIS) {
+      MachineInstr *&FirstUse = Uses.front();
+
+      if (LIS.getInstructionIndex(NewUseMI) <
+          LIS.getInstructionIndex(*FirstUse)) {
+        // First use in the list should always be the earliest in the region.
+        Uses.push_back(FirstUse);
+        FirstUse = &NewUseMI;
+      } else {
+        Uses.push_back(&NewUseMI);
+      }
+    }
+  };
+
   /// Groups information about a rematerializable register.
   struct RematReg {
     /// Single MI defining the rematerializable register.
     MachineInstr *DefMI;
-    /// Position at which the register should be rematerialized.
-    MachineBasicBlock::iterator InsertPoint;
+    /// Positions at which the register should be rematerialized.
+    SmallVector<RegionUses, 2> Uses;
     /// Regions in which rematerializing the register is guaranteed to decrease
     /// RP.
     BitVector Beneficial;
@@ -430,9 +452,14 @@ private:
     /// The rematerializable register's lane bitmask.
     LaneBitmask Mask;
 
-    RematReg(MachineInstr *DefMI, MachineBasicBlock::iterator InsertPoint,
+    unsigned DefFrequency;
+
+    unsigned UseFrequency;
+
+    RematReg(MachineInstr *DefMI, ArrayRef<RegionUses> Uses,
              GCNScheduleDAGMILive &DAG,
-             const DenseMap<MachineInstr *, unsigned> &MIRegion);
+             const DenseMap<MachineInstr *, unsigned> &MIRegion,
+             ArrayRef<uint64_t> RegionFreq);
 
     /// Returns whether the regions at which the register is live intersects
     /// with the \p Target regions.
@@ -452,7 +479,7 @@ private:
     /// The rematerializable register under consideration.
     const RematReg *Remat;
 
-    ScoredRemat(const RematReg *Remat, const PreRARematStage &Stage);
+    ScoredRemat(const RematReg *Remat, const GCNScheduleDAGMILive &DAG);
 
     /// Updates the rematerialization's score w.r.t. the stage's current state.
     /// This notably depends on the current set of target regions and on whether
@@ -504,10 +531,11 @@ private:
   unsigned AchievedOcc;
 
   /// List of rematerializable registers.
-  SmallVector<RematReg> RematRegs;
+  SmallVector<RematReg, 16> RematRegs;
   /// List of rematerializations to rollback if rematerialization does not end
   /// up being beneficial.
-  SmallVector<std::pair<MachineInstr *, const RematReg *>> Rollbackable;
+  SmallVector<std::pair<SmallVector<MachineInstr *>, const RematReg *>>
+      Rollbackable;
 
   /// After successful stage initialization, indicates which regions should be
   /// rescheduled.
@@ -532,14 +560,17 @@ private:
   bool collectRematRegs();
 
   /// Returns whether is is always beneficial to rematerialize \p Remat.
-  bool isAlwaysBeneficial(const RematReg &Remat) const;
+  bool isAlwaysBeneficial(const RematReg &Remat) const {
+    return Remat.UseFrequency <= Remat.DefFrequency;
+  }
 
   /// Rematerializes \p Remat. This removes the rematerialized register from
   /// live-in lists in the DAG and updates RP targets in all affected regions,
   /// which are also marked in \ref RescheduleRegions. Regions in which RP
   /// target updates are heuristic in nature are set in \p RecomputeRP. Returns
-  /// the newly created MI.
-  MachineInstr *rematerialize(const RematReg &Remat, BitVector &RecomputeRP);
+  /// the newly created MIs, corresponding in order to the \p Remat uses.
+  SmallVector<MachineInstr *> rematerialize(const RematReg &Remat,
+                                            BitVector &RecomputeRP);
 
   /// Rollbacks all rematerialized registers in \ref Rollbackable.
   void rollback() const;
