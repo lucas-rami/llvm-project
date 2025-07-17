@@ -27,7 +27,6 @@ define amdgpu_kernel void @infinite_loop(ptr addrspace(1) %out) {
 ; IR-NEXT:    br i1 true, label [[LOOP]], label [[DUMMYRETURNBLOCK:%.*]]
 ; IR:       DummyReturnBlock:
 ; IR-NEXT:    ret void
-;
 entry:
   br label %loop
 
@@ -46,8 +45,8 @@ define amdgpu_kernel void @infinite_loop_ret(ptr addrspace(1) %out) {
 ; SI-NEXT:    s_load_dwordx2 s[0:1], s[4:5], 0x9
 ; SI-NEXT:    s_mov_b32 s3, 0xf000
 ; SI-NEXT:    s_mov_b32 s2, -1
-; SI-NEXT:    v_mov_b32_e32 v0, 0x3e7
 ; SI-NEXT:    s_and_b64 vcc, exec, -1
+; SI-NEXT:    v_mov_b32_e32 v0, 0x3e7
 ; SI-NEXT:  .LBB1_2: ; %loop
 ; SI-NEXT:    ; =>This Inner Loop Header: Depth=1
 ; SI-NEXT:    s_waitcnt lgkmcnt(0)
@@ -67,7 +66,6 @@ define amdgpu_kernel void @infinite_loop_ret(ptr addrspace(1) %out) {
 ; IR-NEXT:    br i1 true, label [[LOOP]], label [[UNIFIEDRETURNBLOCK]]
 ; IR:       UnifiedReturnBlock:
 ; IR-NEXT:    ret void
-;
 entry:
   %tmp = tail call i32 @llvm.amdgcn.workitem.id.x()
   %cond = icmp eq i32 %tmp, 1
@@ -90,8 +88,8 @@ define amdgpu_kernel void @infinite_loops(ptr addrspace(1) %out) {
 ; SI-NEXT:  ; %bb.1:
 ; SI-NEXT:    s_mov_b32 s3, 0xf000
 ; SI-NEXT:    s_mov_b32 s2, -1
-; SI-NEXT:    v_mov_b32_e32 v0, 0x378
 ; SI-NEXT:    s_and_b64 vcc, exec, -1
+; SI-NEXT:    v_mov_b32_e32 v0, 0x378
 ; SI-NEXT:  .LBB2_2: ; %loop2
 ; SI-NEXT:    ; =>This Inner Loop Header: Depth=1
 ; SI-NEXT:    s_waitcnt lgkmcnt(0)
@@ -109,9 +107,9 @@ define amdgpu_kernel void @infinite_loops(ptr addrspace(1) %out) {
 ; SI-NEXT:  ; %bb.5:
 ; SI-NEXT:    s_mov_b32 s3, 0xf000
 ; SI-NEXT:    s_mov_b32 s2, -1
+; SI-NEXT:    s_and_b64 vcc, exec, 0
 ; SI-NEXT:    s_waitcnt expcnt(0)
 ; SI-NEXT:    v_mov_b32_e32 v0, 0x3e7
-; SI-NEXT:    s_and_b64 vcc, exec, 0
 ; SI-NEXT:  .LBB2_6: ; %loop1
 ; SI-NEXT:    ; =>This Inner Loop Header: Depth=1
 ; SI-NEXT:    buffer_store_dword v0, off, s[0:3], 0
@@ -131,7 +129,6 @@ define amdgpu_kernel void @infinite_loops(ptr addrspace(1) %out) {
 ; IR-NEXT:    br i1 true, label [[LOOP2]], label [[DUMMYRETURNBLOCK]]
 ; IR:       DummyReturnBlock:
 ; IR-NEXT:    ret void
-;
 entry:
   br i1 poison, label %loop1, label %loop2
 
@@ -155,7 +152,6 @@ define amdgpu_kernel void @infinite_loop_nest_ret(ptr addrspace(1) %out) {
 ; SI-NEXT:    v_cmp_ne_u32_e64 s[0:1], 3, v0
 ; SI-NEXT:    s_mov_b32 s7, 0xf000
 ; SI-NEXT:    s_mov_b32 s6, -1
-; SI-NEXT:    v_mov_b32_e32 v0, 0x3e7
 ; SI-NEXT:  .LBB3_2: ; %outer_loop
 ; SI-NEXT:    ; =>This Loop Header: Depth=1
 ; SI-NEXT:    ; Child Loop BB3_3 Depth 2
@@ -164,6 +160,8 @@ define amdgpu_kernel void @infinite_loop_nest_ret(ptr addrspace(1) %out) {
 ; SI-NEXT:    ; Parent Loop BB3_2 Depth=1
 ; SI-NEXT:    ; => This Inner Loop Header: Depth=2
 ; SI-NEXT:    s_and_b64 s[8:9], exec, s[0:1]
+; SI-NEXT:    s_waitcnt expcnt(0)
+; SI-NEXT:    v_mov_b32_e32 v0, 0x3e7
 ; SI-NEXT:    s_or_b64 s[2:3], s[8:9], s[2:3]
 ; SI-NEXT:    s_waitcnt lgkmcnt(0)
 ; SI-NEXT:    buffer_store_dword v0, off, s[4:7], 0
@@ -192,7 +190,6 @@ define amdgpu_kernel void @infinite_loop_nest_ret(ptr addrspace(1) %out) {
 ; IR-NEXT:    br i1 [[COND3]], label [[INNER_LOOP]], label [[OUTER_LOOP]]
 ; IR:       UnifiedReturnBlock:
 ; IR-NEXT:    ret void
-;
 entry:
   %tmp = tail call i32 @llvm.amdgcn.workitem.id.x()
   %cond1 = icmp ne i32 %tmp, 1  ; avoid following BB optimizing away through the domination

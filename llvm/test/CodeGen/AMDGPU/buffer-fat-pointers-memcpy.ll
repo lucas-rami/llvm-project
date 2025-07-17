@@ -436,17 +436,17 @@ define amdgpu_kernel void @memcpy_known(ptr addrspace(7) %src, ptr addrspace(7) 
 ; GISEL-GFX942-NEXT:    s_mov_b32 s2, s7
 ; GISEL-GFX942-NEXT:    s_waitcnt lgkmcnt(0)
 ; GISEL-GFX942-NEXT:    s_or_b64 s[6:7], s[6:7], s[2:3]
-; GISEL-GFX942-NEXT:    v_mov_b32_e32 v0, 0x2000
-; GISEL-GFX942-NEXT:    v_mov_b32_e32 v1, s16
+; GISEL-GFX942-NEXT:    v_mov_b32_e32 v0, s16
+; GISEL-GFX942-NEXT:    v_mov_b32_e32 v1, 0x2000
 ; GISEL-GFX942-NEXT:  .LBB0_1: ; %load-store-loop
 ; GISEL-GFX942-NEXT:    ; =>This Inner Loop Header: Depth=1
-; GISEL-GFX942-NEXT:    v_add_u32_e32 v62, s0, v1
+; GISEL-GFX942-NEXT:    v_add_u32_e32 v62, s0, v0
 ; GISEL-GFX942-NEXT:    buffer_load_dwordx4 v[2:5], v62, s[8:11], 0 offen
 ; GISEL-GFX942-NEXT:    buffer_load_dwordx4 v[6:9], v62, s[8:11], 0 offen offset:16
 ; GISEL-GFX942-NEXT:    buffer_load_dwordx4 v[10:13], v62, s[8:11], 0 offen offset:32
-; GISEL-GFX942-NEXT:    v_add_u32_e32 v63, s12, v1
-; GISEL-GFX942-NEXT:    v_add_u32_e32 v1, 0x100, v1
-; GISEL-GFX942-NEXT:    v_cmp_lt_u32_e32 vcc, v1, v0
+; GISEL-GFX942-NEXT:    v_add_u32_e32 v63, s12, v0
+; GISEL-GFX942-NEXT:    v_add_u32_e32 v0, 0x100, v0
+; GISEL-GFX942-NEXT:    v_cmp_lt_u32_e32 vcc, v0, v1
 ; GISEL-GFX942-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-GFX942-NEXT:    v_accvgpr_write_b32 a0, v13 ; Reload Reuse
 ; GISEL-GFX942-NEXT:    v_accvgpr_write_b32 a1, v12 ; Reload Reuse
