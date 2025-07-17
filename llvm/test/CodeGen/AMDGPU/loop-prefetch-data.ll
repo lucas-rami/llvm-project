@@ -151,7 +151,7 @@ define amdgpu_kernel void @copy_constant(ptr addrspace(1) nocapture %d, ptr addr
 ; GFX12-NEXT:    s_cbranch_scc1 .LBB2_3
 ; GFX12-NEXT:  ; %bb.1: ; %for.body.preheader
 ; GFX12-NEXT:    s_load_b128 s[0:3], s[4:5], 0x24
-; GFX12-NEXT:    v_mov_b32_e32 v0, 0
+; GFX12-NEXT:    v_mov_b32_e32 v4, 0
 ; GFX12-NEXT:  .LBB2_2: ; %for.body
 ; GFX12-NEXT:    ; =>This Inner Loop Header: Depth=1
 ; GFX12-NEXT:    s_wait_kmcnt 0x0
@@ -160,9 +160,9 @@ define amdgpu_kernel void @copy_constant(ptr addrspace(1) nocapture %d, ptr addr
 ; GFX12-NEXT:    s_add_nc_u64 s[2:3], s[2:3], 16
 ; GFX12-NEXT:    s_cmp_lg_u32 s6, 0
 ; GFX12-NEXT:    s_wait_kmcnt 0x0
-; GFX12-NEXT:    v_dual_mov_b32 v1, s8 :: v_dual_mov_b32 v2, s9
-; GFX12-NEXT:    v_dual_mov_b32 v3, s10 :: v_dual_mov_b32 v4, s11
-; GFX12-NEXT:    global_store_b128 v0, v[1:4], s[0:1]
+; GFX12-NEXT:    v_dual_mov_b32 v0, s8 :: v_dual_mov_b32 v1, s9
+; GFX12-NEXT:    v_dual_mov_b32 v2, s10 :: v_dual_mov_b32 v3, s11
+; GFX12-NEXT:    global_store_b128 v4, v[0:3], s[0:1]
 ; GFX12-NEXT:    s_add_nc_u64 s[0:1], s[0:1], 16
 ; GFX12-NEXT:    s_cbranch_scc1 .LBB2_2
 ; GFX12-NEXT:  .LBB2_3: ; %for.end
@@ -176,7 +176,7 @@ define amdgpu_kernel void @copy_constant(ptr addrspace(1) nocapture %d, ptr addr
 ; GFX12-SPREFETCH-NEXT:    s_cbranch_scc1 .LBB2_3
 ; GFX12-SPREFETCH-NEXT:  ; %bb.1: ; %for.body.preheader
 ; GFX12-SPREFETCH-NEXT:    s_load_b128 s[0:3], s[4:5], 0x24
-; GFX12-SPREFETCH-NEXT:    v_mov_b32_e32 v0, 0
+; GFX12-SPREFETCH-NEXT:    v_mov_b32_e32 v4, 0
 ; GFX12-SPREFETCH-NEXT:  .LBB2_2: ; %for.body
 ; GFX12-SPREFETCH-NEXT:    ; =>This Inner Loop Header: Depth=1
 ; GFX12-SPREFETCH-NEXT:    s_wait_kmcnt 0x0
@@ -186,9 +186,9 @@ define amdgpu_kernel void @copy_constant(ptr addrspace(1) nocapture %d, ptr addr
 ; GFX12-SPREFETCH-NEXT:    s_add_nc_u64 s[2:3], s[2:3], 16
 ; GFX12-SPREFETCH-NEXT:    s_cmp_lg_u32 s6, 0
 ; GFX12-SPREFETCH-NEXT:    s_wait_kmcnt 0x0
-; GFX12-SPREFETCH-NEXT:    v_dual_mov_b32 v1, s8 :: v_dual_mov_b32 v2, s9
-; GFX12-SPREFETCH-NEXT:    v_dual_mov_b32 v3, s10 :: v_dual_mov_b32 v4, s11
-; GFX12-SPREFETCH-NEXT:    global_store_b128 v0, v[1:4], s[0:1]
+; GFX12-SPREFETCH-NEXT:    v_dual_mov_b32 v0, s8 :: v_dual_mov_b32 v1, s9
+; GFX12-SPREFETCH-NEXT:    v_dual_mov_b32 v2, s10 :: v_dual_mov_b32 v3, s11
+; GFX12-SPREFETCH-NEXT:    global_store_b128 v4, v[0:3], s[0:1]
 ; GFX12-SPREFETCH-NEXT:    s_add_nc_u64 s[0:1], s[0:1], 16
 ; GFX12-SPREFETCH-NEXT:    s_cbranch_scc1 .LBB2_2
 ; GFX12-SPREFETCH-NEXT:  .LBB2_3: ; %for.end

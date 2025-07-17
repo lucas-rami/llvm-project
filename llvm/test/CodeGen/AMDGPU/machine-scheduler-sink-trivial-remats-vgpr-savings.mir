@@ -54,7 +54,6 @@ body:             |
   ; COMB-NEXT:   [[V_CVT_I32_F64_e32_21:%[0-9]+]]:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 21, implicit $exec, implicit $mode, implicit-def $m0
   ; COMB-NEXT:   [[V_CVT_I32_F64_e32_22:%[0-9]+]]:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 22, implicit $exec, implicit $mode, implicit-def $m0
   ; COMB-NEXT:   [[V_CVT_I32_F64_e32_23:%[0-9]+]]:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 23, implicit $exec, implicit $mode, implicit-def $m0
-  ; COMB-NEXT:   [[V_CVT_I32_F64_e32_24:%[0-9]+]]:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 24, implicit $exec, implicit $mode
   ; COMB-NEXT: {{  $}}
   ; COMB-NEXT: bb.1:
   ; COMB-NEXT:   successors: %bb.2(0x40000000), %bb.3(0x40000000)
@@ -87,6 +86,7 @@ body:             |
   ; COMB-NEXT:   S_BRANCH %bb.1
   ; COMB-NEXT: {{  $}}
   ; COMB-NEXT: bb.5:
+  ; COMB-NEXT:   [[V_CVT_I32_F64_e32_24:%[0-9]+]]:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 24, implicit $exec, implicit $mode
   ; COMB-NEXT:   S_NOP 0, implicit [[V_CVT_I32_F64_e32_24]]
   ; COMB-NEXT:   S_ENDPGM 0
   ;
@@ -274,7 +274,6 @@ body:             |
   ; COMB-NEXT:   [[V_CVT_I32_F64_e32_21:%[0-9]+]]:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 21, implicit $exec, implicit $mode, implicit-def $m0
   ; COMB-NEXT:   [[V_CVT_I32_F64_e32_22:%[0-9]+]]:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 22, implicit $exec, implicit $mode, implicit-def $m0
   ; COMB-NEXT:   [[V_CVT_I32_F64_e32_23:%[0-9]+]]:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 23, implicit $exec, implicit $mode, implicit-def $m0
-  ; COMB-NEXT:   [[V_CVT_I32_F64_e32_24:%[0-9]+]]:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 24, implicit $exec, implicit $mode
   ; COMB-NEXT: {{  $}}
   ; COMB-NEXT: bb.1:
   ; COMB-NEXT:   successors: %bb.2(0x40000000), %bb.3(0x40000000)
@@ -307,6 +306,7 @@ body:             |
   ; COMB-NEXT:   S_BRANCH %bb.1
   ; COMB-NEXT: {{  $}}
   ; COMB-NEXT: bb.5:
+  ; COMB-NEXT:   [[V_CVT_I32_F64_e32_24:%[0-9]+]]:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 24, implicit $exec, implicit $mode
   ; COMB-NEXT:   S_NOP 0, implicit [[V_CVT_I32_F64_e32_24]]
   ; COMB-NEXT:   S_ENDPGM 0
   ;
