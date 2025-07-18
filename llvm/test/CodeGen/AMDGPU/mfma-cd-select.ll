@@ -95,7 +95,7 @@ bb3:
 }
 
 ; GCN-LABEL: {{^}}test_mfma_f32_32x32x1f32_nonentry:
-; GCN: v_mfma_f32_32x32x1{{.*}} a[{{[0-9:]+}}], v{{[0-9]+}}, v{{[0-9:]+}}, a[{{[0-9:]+}}]
+; GCN: v_mfma_f32_32x32x1{{.*}} v[{{[0-9:]+}}], v{{[0-9]+}}, v{{[0-9:]+}}, v[{{[0-9:]+}}]
 define void @test_mfma_f32_32x32x1f32_nonentry(ptr addrspace(1) %arg) #0 {
 bb:
   %in.1 = load <32 x float>, ptr addrspace(1) %arg

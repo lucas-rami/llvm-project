@@ -160,42 +160,25 @@ define <16 x float> @test_mfma_f32_32x32x16_bf16__mac(<8 x bfloat> %arg0, <8 x b
 ; GCN-LABEL: test_mfma_f32_32x32x16_bf16__mac:
 ; GCN:       ; %bb.0:
 ; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GCN-NEXT:    v_accvgpr_write_b32 a0, v8
-; GCN-NEXT:    v_accvgpr_write_b32 a1, v9
-; GCN-NEXT:    v_accvgpr_write_b32 a2, v10
-; GCN-NEXT:    v_accvgpr_write_b32 a3, v11
-; GCN-NEXT:    v_accvgpr_write_b32 a4, v12
-; GCN-NEXT:    v_accvgpr_write_b32 a5, v13
-; GCN-NEXT:    v_accvgpr_write_b32 a6, v14
-; GCN-NEXT:    v_accvgpr_write_b32 a7, v15
-; GCN-NEXT:    v_accvgpr_write_b32 a8, v16
-; GCN-NEXT:    v_accvgpr_write_b32 a9, v17
-; GCN-NEXT:    v_accvgpr_write_b32 a10, v18
-; GCN-NEXT:    v_accvgpr_write_b32 a11, v19
-; GCN-NEXT:    v_accvgpr_write_b32 a12, v20
-; GCN-NEXT:    v_accvgpr_write_b32 a13, v21
-; GCN-NEXT:    v_accvgpr_write_b32 a14, v22
-; GCN-NEXT:    v_accvgpr_write_b32 a15, v23
-; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_f32_32x32x16_bf16 a[0:15], v[0:3], v[4:7], a[0:15]
+; GCN-NEXT:    v_mfma_f32_32x32x16_bf16 v[8:23], v[0:3], v[4:7], v[8:23]
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 2
-; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
-; GCN-NEXT:    v_accvgpr_read_b32 v1, a1
-; GCN-NEXT:    v_accvgpr_read_b32 v2, a2
-; GCN-NEXT:    v_accvgpr_read_b32 v3, a3
-; GCN-NEXT:    v_accvgpr_read_b32 v4, a4
-; GCN-NEXT:    v_accvgpr_read_b32 v5, a5
-; GCN-NEXT:    v_accvgpr_read_b32 v6, a6
-; GCN-NEXT:    v_accvgpr_read_b32 v7, a7
-; GCN-NEXT:    v_accvgpr_read_b32 v8, a8
-; GCN-NEXT:    v_accvgpr_read_b32 v9, a9
-; GCN-NEXT:    v_accvgpr_read_b32 v10, a10
-; GCN-NEXT:    v_accvgpr_read_b32 v11, a11
-; GCN-NEXT:    v_accvgpr_read_b32 v12, a12
-; GCN-NEXT:    v_accvgpr_read_b32 v13, a13
-; GCN-NEXT:    v_accvgpr_read_b32 v14, a14
-; GCN-NEXT:    v_accvgpr_read_b32 v15, a15
+; GCN-NEXT:    v_mov_b32_e32 v0, v8
+; GCN-NEXT:    v_mov_b32_e32 v1, v9
+; GCN-NEXT:    v_mov_b32_e32 v2, v10
+; GCN-NEXT:    v_mov_b32_e32 v3, v11
+; GCN-NEXT:    v_mov_b32_e32 v4, v12
+; GCN-NEXT:    v_mov_b32_e32 v5, v13
+; GCN-NEXT:    v_mov_b32_e32 v6, v14
+; GCN-NEXT:    v_mov_b32_e32 v7, v15
+; GCN-NEXT:    v_mov_b32_e32 v8, v16
+; GCN-NEXT:    v_mov_b32_e32 v9, v17
+; GCN-NEXT:    v_mov_b32_e32 v10, v18
+; GCN-NEXT:    v_mov_b32_e32 v11, v19
+; GCN-NEXT:    v_mov_b32_e32 v12, v20
+; GCN-NEXT:    v_mov_b32_e32 v13, v21
+; GCN-NEXT:    v_mov_b32_e32 v14, v22
+; GCN-NEXT:    v_mov_b32_e32 v15, v23
 ; GCN-NEXT:    s_setpc_b64 s[30:31]
   %result = call <16 x float> @llvm.amdgcn.mfma.f32.32x32x16.bf16(<8 x bfloat> %arg0, <8 x bfloat> %arg1, <16 x float> %arg2, i32 0, i32 0, i32 0)
   ret <16 x float> %result
@@ -205,42 +188,25 @@ define <16 x float> @test_mfma_f32_32x32x16_bf16__mac__flags(<8 x bfloat> %arg0,
 ; GCN-LABEL: test_mfma_f32_32x32x16_bf16__mac__flags:
 ; GCN:       ; %bb.0:
 ; GCN-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GCN-NEXT:    v_accvgpr_write_b32 a0, v8
-; GCN-NEXT:    v_accvgpr_write_b32 a1, v9
-; GCN-NEXT:    v_accvgpr_write_b32 a2, v10
-; GCN-NEXT:    v_accvgpr_write_b32 a3, v11
-; GCN-NEXT:    v_accvgpr_write_b32 a4, v12
-; GCN-NEXT:    v_accvgpr_write_b32 a5, v13
-; GCN-NEXT:    v_accvgpr_write_b32 a6, v14
-; GCN-NEXT:    v_accvgpr_write_b32 a7, v15
-; GCN-NEXT:    v_accvgpr_write_b32 a8, v16
-; GCN-NEXT:    v_accvgpr_write_b32 a9, v17
-; GCN-NEXT:    v_accvgpr_write_b32 a10, v18
-; GCN-NEXT:    v_accvgpr_write_b32 a11, v19
-; GCN-NEXT:    v_accvgpr_write_b32 a12, v20
-; GCN-NEXT:    v_accvgpr_write_b32 a13, v21
-; GCN-NEXT:    v_accvgpr_write_b32 a14, v22
-; GCN-NEXT:    v_accvgpr_write_b32 a15, v23
-; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_f32_32x32x16_bf16 a[0:15], v[0:3], v[4:7], a[0:15] cbsz:1 abid:1 blgp:1
+; GCN-NEXT:    v_mfma_f32_32x32x16_bf16 v[8:23], v[0:3], v[4:7], v[8:23] cbsz:1 abid:1 blgp:1
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 2
-; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
-; GCN-NEXT:    v_accvgpr_read_b32 v1, a1
-; GCN-NEXT:    v_accvgpr_read_b32 v2, a2
-; GCN-NEXT:    v_accvgpr_read_b32 v3, a3
-; GCN-NEXT:    v_accvgpr_read_b32 v4, a4
-; GCN-NEXT:    v_accvgpr_read_b32 v5, a5
-; GCN-NEXT:    v_accvgpr_read_b32 v6, a6
-; GCN-NEXT:    v_accvgpr_read_b32 v7, a7
-; GCN-NEXT:    v_accvgpr_read_b32 v8, a8
-; GCN-NEXT:    v_accvgpr_read_b32 v9, a9
-; GCN-NEXT:    v_accvgpr_read_b32 v10, a10
-; GCN-NEXT:    v_accvgpr_read_b32 v11, a11
-; GCN-NEXT:    v_accvgpr_read_b32 v12, a12
-; GCN-NEXT:    v_accvgpr_read_b32 v13, a13
-; GCN-NEXT:    v_accvgpr_read_b32 v14, a14
-; GCN-NEXT:    v_accvgpr_read_b32 v15, a15
+; GCN-NEXT:    v_mov_b32_e32 v0, v8
+; GCN-NEXT:    v_mov_b32_e32 v1, v9
+; GCN-NEXT:    v_mov_b32_e32 v2, v10
+; GCN-NEXT:    v_mov_b32_e32 v3, v11
+; GCN-NEXT:    v_mov_b32_e32 v4, v12
+; GCN-NEXT:    v_mov_b32_e32 v5, v13
+; GCN-NEXT:    v_mov_b32_e32 v6, v14
+; GCN-NEXT:    v_mov_b32_e32 v7, v15
+; GCN-NEXT:    v_mov_b32_e32 v8, v16
+; GCN-NEXT:    v_mov_b32_e32 v9, v17
+; GCN-NEXT:    v_mov_b32_e32 v10, v18
+; GCN-NEXT:    v_mov_b32_e32 v11, v19
+; GCN-NEXT:    v_mov_b32_e32 v12, v20
+; GCN-NEXT:    v_mov_b32_e32 v13, v21
+; GCN-NEXT:    v_mov_b32_e32 v14, v22
+; GCN-NEXT:    v_mov_b32_e32 v15, v23
 ; GCN-NEXT:    s_setpc_b64 s[30:31]
   %result = call <16 x float> @llvm.amdgcn.mfma.f32.32x32x16.bf16(<8 x bfloat> %arg0, <8 x bfloat> %arg1, <16 x float> %arg2, i32 1, i32 1, i32 1)
   ret <16 x float> %result

@@ -670,8 +670,8 @@ define amdgpu_kernel void @k512_physical_agpr() #512 {
 }
 
 ; GCN-LABEL: {{^}}f512:
-; GFX90A: NumVgprs: 12{{[0-9]}}
-; GFX90A: NumAgprs: {{[1-9]}}
+; GFX90A: NumVgprs: 256
+; GFX90A: NumAgprs: 0
 define void @f512() #512 {
   call void @use256vgprs()
   ret void
