@@ -27,7 +27,6 @@ body:             |
   ; CHECK-NEXT: {{  $}}
   ; CHECK-NEXT:   [[DEF:%[0-9]+]]:vgpr_32 = IMPLICIT_DEF
   ; CHECK-NEXT:   [[DEF1:%[0-9]+]]:vgpr_32 = IMPLICIT_DEF
-  ; CHECK-NEXT:   [[DEF2:%[0-9]+]]:vgpr_32 = IMPLICIT_DEF
   ; CHECK-NEXT: {{  $}}
   ; CHECK-NEXT: bb.1:
   ; CHECK-NEXT:   successors: %bb.2(0x80000000)
@@ -43,22 +42,23 @@ body:             |
   ; CHECK-NEXT: {{  $}}
   ; CHECK-NEXT: bb.3:
   ; CHECK-NEXT:   [[V_MOV_B32_e32_:%[0-9]+]]:vgpr_32 = V_MOV_B32_e32 0, implicit $exec
+  ; CHECK-NEXT:   [[DEF2:%[0-9]+]]:vgpr_32 = IMPLICIT_DEF
   ; CHECK-NEXT:   [[DEF3:%[0-9]+]]:vgpr_32 = IMPLICIT_DEF
   ; CHECK-NEXT:   [[COPY:%[0-9]+]]:vgpr_32 = COPY [[V_MOV_B32_e32_]]
-  ; CHECK-NEXT:   [[V_MUL_F32_e32_:%[0-9]+]]:vgpr_32 = nofpexcept V_MUL_F32_e32 [[DEF1]], [[DEF1]], implicit $mode, implicit $exec
-  ; CHECK-NEXT:   [[V_MUL_F32_e32_1:%[0-9]+]]:vgpr_32 = nofpexcept V_MUL_F32_e32 [[DEF1]], [[DEF1]], implicit $mode, implicit $exec
+  ; CHECK-NEXT:   [[V_MUL_F32_e32_:%[0-9]+]]:vgpr_32 = nofpexcept V_MUL_F32_e32 [[DEF3]], [[DEF3]], implicit $mode, implicit $exec
+  ; CHECK-NEXT:   [[V_MUL_F32_e32_1:%[0-9]+]]:vgpr_32 = nofpexcept V_MUL_F32_e32 [[DEF3]], [[DEF3]], implicit $mode, implicit $exec
   ; CHECK-NEXT:   [[V_MUL_F32_e32_2:%[0-9]+]]:vgpr_32 = nofpexcept V_MUL_F32_e32 [[V_MOV_B32_e32_]], [[V_MOV_B32_e32_]], implicit $mode, implicit $exec
   ; CHECK-NEXT:   [[V_MOV_B32_e32_1:%[0-9]+]]:vgpr_32 = V_MOV_B32_e32 1092616192, implicit $exec
   ; CHECK-NEXT:   [[DEF4:%[0-9]+]]:vgpr_32 = IMPLICIT_DEF
   ; CHECK-NEXT:   [[V_ADD_F32_e32_:%[0-9]+]]:vgpr_32 = nofpexcept V_ADD_F32_e32 [[V_MOV_B32_e32_]], [[V_MOV_B32_e32_]], implicit $mode, implicit $exec
-  ; CHECK-NEXT:   [[V_MUL_F32_e32_3:%[0-9]+]]:vgpr_32 = nofpexcept V_MUL_F32_e32 [[DEF1]], [[DEF1]], implicit $mode, implicit $exec
+  ; CHECK-NEXT:   [[V_MUL_F32_e32_3:%[0-9]+]]:vgpr_32 = nofpexcept V_MUL_F32_e32 [[DEF3]], [[DEF3]], implicit $mode, implicit $exec
   ; CHECK-NEXT:   dead [[V_MUL_F32_e32_4:%[0-9]+]]:vgpr_32 = nofpexcept V_MUL_F32_e32 [[V_MUL_F32_e32_3]], [[DEF4]], implicit $mode, implicit $exec
   ; CHECK-NEXT:   dead [[V_MOV_B32_e32_1:%[0-9]+]]:vgpr_32 = nofpexcept V_MAC_F32_e32 [[V_ADD_F32_e32_]], [[COPY]], [[V_MOV_B32_e32_1]], implicit $mode, implicit $exec
   ; CHECK-NEXT:   [[DEF5:%[0-9]+]]:sreg_64 = IMPLICIT_DEF
   ; CHECK-NEXT:   $sgpr4 = IMPLICIT_DEF
-  ; CHECK-NEXT:   $vgpr0 = COPY [[DEF3]]
+  ; CHECK-NEXT:   $vgpr0 = COPY [[DEF2]]
   ; CHECK-NEXT:   $vgpr0 = COPY [[V_MOV_B32_e32_]]
-  ; CHECK-NEXT:   $vgpr1 = COPY [[DEF1]]
+  ; CHECK-NEXT:   $vgpr1 = COPY [[DEF3]]
   ; CHECK-NEXT:   $vgpr0 = COPY [[V_MUL_F32_e32_]]
   ; CHECK-NEXT:   $vgpr1 = COPY [[V_MUL_F32_e32_1]]
   ; CHECK-NEXT:   $vgpr2 = COPY [[V_MUL_F32_e32_2]]
@@ -78,7 +78,7 @@ body:             |
   ; CHECK-NEXT:   [[DEF13:%[0-9]+]]:vgpr_32 = IMPLICIT_DEF
   ; CHECK-NEXT:   dead [[V_MAD_F32_e64_2:%[0-9]+]]:vgpr_32 = nofpexcept V_MAD_F32_e64 0, [[V_ADD_F32_e32_1]], 0, [[DEF13]], 0, [[DEF12]], 0, 0, implicit $mode, implicit $exec
   ; CHECK-NEXT:   [[DEF14:%[0-9]+]]:vreg_64 = IMPLICIT_DEF
-  ; CHECK-NEXT:   GLOBAL_STORE_DWORD [[DEF14]], [[DEF2]], 0, 0, implicit $exec
+  ; CHECK-NEXT:   GLOBAL_STORE_DWORD [[DEF14]], [[DEF1]], 0, 0, implicit $exec
   ; CHECK-NEXT:   S_ENDPGM 0
   bb.0:
     successors: %bb.1

@@ -20,39 +20,39 @@ define amdgpu_kernel void @local_stack_offset_uses_sp(ptr addrspace(1) %out) {
 ; MUBUF-LABEL: local_stack_offset_uses_sp:
 ; MUBUF:       ; %bb.0: ; %entry
 ; MUBUF-NEXT:    s_add_u32 s0, s0, s17
-; MUBUF-NEXT:    v_mov_b32_e32 v1, 0x3000
 ; MUBUF-NEXT:    s_addc_u32 s1, s1, 0
-; MUBUF-NEXT:    v_add_u32_e32 v0, 64, v1
-; MUBUF-NEXT:    v_mov_b32_e32 v1, 0
-; MUBUF-NEXT:    v_mov_b32_e32 v2, 0x2000
+; MUBUF-NEXT:    v_mov_b32_e32 v0, 0
+; MUBUF-NEXT:    v_mov_b32_e32 v1, 0x2000
 ; MUBUF-NEXT:    s_mov_b32 s4, 0
-; MUBUF-NEXT:    buffer_store_dword v1, v2, s[0:3], 0 offen
+; MUBUF-NEXT:    buffer_store_dword v0, v1, s[0:3], 0 offen
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
 ; MUBUF-NEXT:  .LBB0_1: ; %loadstoreloop
 ; MUBUF-NEXT:    ; =>This Inner Loop Header: Depth=1
-; MUBUF-NEXT:    v_mov_b32_e32 v3, 0x3000
-; MUBUF-NEXT:    v_add_u32_e32 v2, s4, v3
+; MUBUF-NEXT:    v_mov_b32_e32 v2, 0x3000
+; MUBUF-NEXT:    v_add_u32_e32 v1, s4, v2
 ; MUBUF-NEXT:    s_add_i32 s4, s4, 1
 ; MUBUF-NEXT:    s_cmpk_lt_u32 s4, 0x2120
-; MUBUF-NEXT:    buffer_store_byte v1, v2, s[0:3], 0 offen
+; MUBUF-NEXT:    buffer_store_byte v0, v1, s[0:3], 0 offen
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
 ; MUBUF-NEXT:    s_cbranch_scc1 .LBB0_1
 ; MUBUF-NEXT:  ; %bb.2: ; %split
-; MUBUF-NEXT:    v_mov_b32_e32 v1, 0x50d0
-; MUBUF-NEXT:    buffer_load_dword v2, v1, s[0:3], 0 offen glc
+; MUBUF-NEXT:    v_mov_b32_e32 v0, 0x50d0
+; MUBUF-NEXT:    v_mov_b32_e32 v3, 0x3000
+; MUBUF-NEXT:    buffer_load_dword v1, v0, s[0:3], 0 offen glc
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
-; MUBUF-NEXT:    buffer_load_dword v3, v1, s[0:3], 0 offen offset:4 glc
+; MUBUF-NEXT:    buffer_load_dword v2, v0, s[0:3], 0 offen offset:4 glc
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
-; MUBUF-NEXT:    buffer_load_dword v4, v0, s[0:3], 0 offen glc
+; MUBUF-NEXT:    v_add_u32_e32 v0, 64, v3
+; MUBUF-NEXT:    buffer_load_dword v3, v0, s[0:3], 0 offen glc
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
-; MUBUF-NEXT:    buffer_load_dword v5, v0, s[0:3], 0 offen offset:4 glc
+; MUBUF-NEXT:    buffer_load_dword v4, v0, s[0:3], 0 offen offset:4 glc
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
 ; MUBUF-NEXT:    s_load_dwordx2 s[4:5], s[8:9], 0x0
-; MUBUF-NEXT:    v_mov_b32_e32 v6, 0
-; MUBUF-NEXT:    v_add_co_u32_e32 v0, vcc, v2, v4
-; MUBUF-NEXT:    v_addc_co_u32_e32 v1, vcc, v3, v5, vcc
+; MUBUF-NEXT:    v_mov_b32_e32 v5, 0
+; MUBUF-NEXT:    v_add_co_u32_e32 v0, vcc, v1, v3
+; MUBUF-NEXT:    v_addc_co_u32_e32 v1, vcc, v2, v4, vcc
 ; MUBUF-NEXT:    s_waitcnt lgkmcnt(0)
-; MUBUF-NEXT:    global_store_dwordx2 v6, v[0:1], s[4:5]
+; MUBUF-NEXT:    global_store_dwordx2 v5, v[0:1], s[4:5]
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
 ; MUBUF-NEXT:    s_endpgm
 ;
@@ -109,44 +109,44 @@ define void @func_local_stack_offset_uses_sp(ptr addrspace(1) %out) {
 ; MUBUF-NEXT:    s_mov_b32 s5, s33
 ; MUBUF-NEXT:    s_add_i32 s33, s32, 0x7ffc0
 ; MUBUF-NEXT:    s_and_b32 s33, s33, 0xfff80000
-; MUBUF-NEXT:    v_lshrrev_b32_e64 v3, 6, s33
-; MUBUF-NEXT:    v_add_u32_e32 v3, 0x3000, v3
 ; MUBUF-NEXT:    s_mov_b32 s6, s34
-; MUBUF-NEXT:    v_add_u32_e32 v2, 64, v3
-; MUBUF-NEXT:    v_mov_b32_e32 v3, 0
-; MUBUF-NEXT:    v_mov_b32_e32 v4, 0x2000
+; MUBUF-NEXT:    v_mov_b32_e32 v2, 0
+; MUBUF-NEXT:    v_mov_b32_e32 v3, 0x2000
 ; MUBUF-NEXT:    s_mov_b32 s4, 0
 ; MUBUF-NEXT:    s_mov_b32 s34, s32
 ; MUBUF-NEXT:    s_add_i32 s32, s32, 0x200000
-; MUBUF-NEXT:    buffer_store_dword v3, v4, s[0:3], s33 offen
+; MUBUF-NEXT:    buffer_store_dword v2, v3, s[0:3], s33 offen
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
 ; MUBUF-NEXT:  .LBB1_1: ; %loadstoreloop
 ; MUBUF-NEXT:    ; =>This Inner Loop Header: Depth=1
-; MUBUF-NEXT:    v_lshrrev_b32_e64 v5, 6, s33
-; MUBUF-NEXT:    v_add_u32_e32 v4, s4, v5
-; MUBUF-NEXT:    v_mov_b32_e32 v5, 0x3000
+; MUBUF-NEXT:    v_lshrrev_b32_e64 v4, 6, s33
+; MUBUF-NEXT:    v_add_u32_e32 v3, s4, v4
+; MUBUF-NEXT:    v_mov_b32_e32 v4, 0x3000
 ; MUBUF-NEXT:    s_add_i32 s4, s4, 1
-; MUBUF-NEXT:    v_add_u32_e32 v4, v5, v4
+; MUBUF-NEXT:    v_add_u32_e32 v3, v4, v3
 ; MUBUF-NEXT:    s_cmpk_lt_u32 s4, 0x2120
-; MUBUF-NEXT:    buffer_store_byte v3, v4, s[0:3], 0 offen
+; MUBUF-NEXT:    buffer_store_byte v2, v3, s[0:3], 0 offen
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
 ; MUBUF-NEXT:    s_cbranch_scc1 .LBB1_1
 ; MUBUF-NEXT:  ; %bb.2: ; %split
-; MUBUF-NEXT:    v_lshrrev_b32_e64 v4, 6, s33
-; MUBUF-NEXT:    v_add_u32_e32 v3, 0x50d0, v4
-; MUBUF-NEXT:    buffer_load_dword v4, v3, s[0:3], 0 offen glc
+; MUBUF-NEXT:    v_lshrrev_b32_e64 v3, 6, s33
+; MUBUF-NEXT:    v_lshrrev_b32_e64 v5, 6, s33
+; MUBUF-NEXT:    v_add_u32_e32 v2, 0x50d0, v3
+; MUBUF-NEXT:    v_add_u32_e32 v5, 0x3000, v5
+; MUBUF-NEXT:    buffer_load_dword v3, v2, s[0:3], 0 offen glc
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
-; MUBUF-NEXT:    buffer_load_dword v5, v3, s[0:3], 0 offen offset:4 glc
+; MUBUF-NEXT:    buffer_load_dword v4, v2, s[0:3], 0 offen offset:4 glc
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
-; MUBUF-NEXT:    buffer_load_dword v6, v2, s[0:3], 0 offen glc
+; MUBUF-NEXT:    v_add_u32_e32 v2, 64, v5
+; MUBUF-NEXT:    buffer_load_dword v5, v2, s[0:3], 0 offen glc
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
-; MUBUF-NEXT:    buffer_load_dword v7, v2, s[0:3], 0 offen offset:4 glc
+; MUBUF-NEXT:    buffer_load_dword v6, v2, s[0:3], 0 offen offset:4 glc
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
 ; MUBUF-NEXT:    s_mov_b32 s32, s34
 ; MUBUF-NEXT:    s_mov_b32 s34, s6
 ; MUBUF-NEXT:    s_mov_b32 s33, s5
-; MUBUF-NEXT:    v_add_co_u32_e32 v2, vcc, v4, v6
-; MUBUF-NEXT:    v_addc_co_u32_e32 v3, vcc, v5, v7, vcc
+; MUBUF-NEXT:    v_add_co_u32_e32 v2, vcc, v3, v5
+; MUBUF-NEXT:    v_addc_co_u32_e32 v3, vcc, v4, v6, vcc
 ; MUBUF-NEXT:    global_store_dwordx2 v[0:1], v[2:3], off
 ; MUBUF-NEXT:    s_waitcnt vmcnt(0)
 ; MUBUF-NEXT:    s_setpc_b64 s[30:31]

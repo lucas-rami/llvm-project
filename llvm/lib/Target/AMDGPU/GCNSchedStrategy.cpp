@@ -29,7 +29,9 @@
 #include "SIMachineFunctionInfo.h"
 #include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
 #include "llvm/CodeGen/MachineBranchProbabilityInfo.h"
@@ -1116,7 +1118,12 @@ void PreRARematStage::printTargetRegions(bool PrintAll) const {
 void PreRARematStage::RematReg::print(
     const DenseMap<MachineInstr *, unsigned> &MIRegion) const {
   REMAT_DEBUG(dbgs() << "  [" << MIRegion.at(DefMI) << "] " << *DefMI);
-  REMAT_DEBUG(dbgs() << "    -> used in [" << UseRegion << "] " << *UseMI);
+  for (const auto &[I, RegionUsers] : zip(UsedIn.set_bits(), Users)) {
+    REMAT_DEBUG(dbgs() << "    [" << I << "] used " << RegionUsers.size()
+                       << " time(s)\n");
+    for (const MachineInstr *UserMI : RegionUsers)
+      REMAT_DEBUG(dbgs() << "      -> " << *UserMI);
+  }
   const unsigned NumRegions = Live.size();
   REMAT_DEBUG(dbgs() << "    Guaranteed RP reduction in:");
   for (unsigned I = 0; I < NumRegions; ++I) {
@@ -1300,12 +1307,12 @@ bool PreRARematStage::initGCNSchedStage() {
 
       REMAT_DEBUG(dbgs() << "[" << MIRegion[Remat.DefMI] << "] REMAT *" << Score
                          << "* | " << *Remat.DefMI);
-      MachineInstr *RematMI = rematerialize(Remat, RecomputeRP);
+      SmallVector<MachineInstr *> RematMIs = rematerialize(Remat, RecomputeRP);
       // Every rematerialization done with the objective of increasing occupancy
       // increases latency. If we don't manage to increase occupancy, we want to
       // roll them back.
       if (TargetOcc)
-        Rollbackable.push_back({RematMI, &Remat});
+        Rollbackable.push_back({RematMIs, &Remat});
       UpdateTargetRegions(Remat.Live);
     }
 
@@ -1996,6 +2003,8 @@ bool PreRARematStage::collectRematRegs(ArrayRef<uint64_t> RegionFreq) {
   // remat chains checks.
   DenseSet<Register> RematRegSet;
 
+  SmallDenseMap<unsigned, unsigned, 4> RegionToRegionUsesIdx;
+
   // Identify rematerializable instructions in the function.
   for (unsigned I = 0, E = DAG.Regions.size(); I != E; ++I) {
     auto Region = DAG.Regions[I];
@@ -2011,42 +2020,73 @@ bool PreRARematStage::collectRematRegs(ArrayRef<uint64_t> RegionFreq) {
       if (!Reg.isVirtual() || !DAG.MRI.hasOneDef(Reg))
         continue;
 
-      // We only care to rematerialize the instruction if it has a single
-      // non-debug user in a different region.
-      // FIXME: Allow rematerializations with multiple uses. This should be
-      // relatively easy to support using the current cost model.
-      MachineInstr *UseMI = DAG.MRI.getOneNonDBGUser(Reg);
-      if (!UseMI)
-        continue;
-      auto UseRegion = MIRegion.find(UseMI);
-      if (UseRegion == MIRegion.end() || UseRegion->second == I)
+      // Analyze MI uses.
+      auto MIUsers = DAG.MRI.use_nodbg_instructions(Reg);
+      if (MIUsers.empty())
         continue;
 
-      // Do not rematerialize an instruction if it uses or is used by an
-      // instruction that we have designated for rematerialization.
-      // FIXME: Allow for rematerialization chains: this requires 1. updating
-      // remat points to account for uses that are rematerialized, and 2.
-      // either rematerializing the candidates in careful ordering, or
-      // deferring the MBB RP walk until the entire chain has been
-      // rematerialized.
-      MachineOperand &UseFirstMO = UseMI->getOperand(0);
-      if ((UseFirstMO.isReg() && RematRegSet.contains(UseFirstMO.getReg())) ||
-          llvm::any_of(DefMI.operands(), [&RematRegSet](MachineOperand &MO) {
-            return MO.isReg() && RematRegSet.contains(MO.getReg());
-          }))
-        continue;
+      SmallVector<RegionUsers> Uses;
+      bool Stop = false;
+      RegionToRegionUsesIdx.clear();
+      for (MachineInstr &UseMI : MIUsers) {
+        auto UseRegionIt = MIRegion.find(&UseMI);
+        if (UseRegionIt == MIRegion.end()) {
+          Stop = true;
+          break;
+        }
 
-      // Do not rematerialize an instruction it it uses registers that aren't
-      // available at its use. This ensures that we are not extending any live
-      // range while rematerializing.
-      SlotIndex DefIdx = DAG.LIS->getInstructionIndex(DefMI);
-      SlotIndex UseIdx = DAG.LIS->getInstructionIndex(*UseMI).getRegSlot(true);
-      if (!allUsesAvailableAt(&DefMI, DefIdx, UseIdx))
+        // Do not rematerialize an instruction if any of its uses is in the
+        // same region.
+        // FIXME: Allow for rematerializing while keeping the original
+        // instruction if the register is used in its own region.
+        unsigned UseRegion = UseRegionIt->second;
+        if (UseRegion == I) {
+          Stop = true;
+          break;
+        }
+
+        // Do not rematerialize an instruction if it uses or is used by an
+        // instruction that we have designated for rematerialization.
+        // FIXME: Allow for rematerialization chains: this requires 1. updating
+        // remat points to account for uses that are rematerialized, and 2.
+        // either rematerializing the candidates in careful ordering, or
+        // deferring the MBB RP walk until the entire chain has been
+        // rematerialized.
+        const MachineOperand &UseFirstMO = UseMI.getOperand(0);
+        if ((UseFirstMO.isReg() && RematRegSet.contains(UseFirstMO.getReg())) ||
+            llvm::any_of(
+                DefMI.operands(), [&RematRegSet](const MachineOperand &MO) {
+                  return MO.isReg() && RematRegSet.contains(MO.getReg());
+                })) {
+          Stop = true;
+          break;
+        }
+
+        // Do not rematerialize an instruction it it uses registers that aren't
+        // available at its use. This ensures that we are not extending any live
+        // range while rematerializing.
+        SlotIndex DefIdx = DAG.LIS->getInstructionIndex(DefMI);
+        SlotIndex UseIdx = DAG.LIS->getInstructionIndex(UseMI).getRegSlot(true);
+        if (!allUsesAvailableAt(&DefMI, DefIdx, UseIdx)) {
+          Stop = true;
+          break;
+        }
+
+        auto RegionUsesIdx = RegionToRegionUsesIdx.find(UseRegion);
+        if (RegionUsesIdx == RegionToRegionUsesIdx.end()) {
+          RegionToRegionUsesIdx.insert({UseRegion, Uses.size()});
+          Uses.emplace_back(UseRegion, &UseMI);
+        } else {
+          Uses[RegionUsesIdx->second].addUser(&UseMI, *DAG.LIS);
+        }
+      }
+      if (Stop)
         continue;
+      sort(Uses);
 
       // Add the instruction to the rematerializable list.
       RematRegSet.insert(Reg);
-      RematRegs.emplace_back(&DefMI, UseMI, DAG, MIRegion, RegionFreq);
+      RematRegs.emplace_back(&DefMI, Uses, DAG, MIRegion, RegionFreq);
     }
   }
 
@@ -2054,13 +2094,24 @@ bool PreRARematStage::collectRematRegs(ArrayRef<uint64_t> RegionFreq) {
 }
 
 PreRARematStage::RematReg::RematReg(
-    MachineInstr *DefMI, MachineInstr *UseMI, GCNScheduleDAGMILive &DAG,
+    MachineInstr *DefMI, ArrayRef<RegionUsers> Uses, GCNScheduleDAGMILive &DAG,
     const DenseMap<MachineInstr *, unsigned> &MIRegion,
     ArrayRef<uint64_t> RegionFreq)
-    : DefMI(DefMI), UseMI(UseMI), UseRegion(MIRegion.at(UseMI)),
-      LiveIn(DAG.Regions.size()), LiveOut(DAG.Regions.size()),
-      Live(DAG.Regions.size()), DefFrequency(RegionFreq[MIRegion.at(DefMI)]),
-      UseFrequency(RegionFreq[MIRegion.at(UseMI)]) {
+    : DefMI(DefMI), LiveIn(DAG.Regions.size()), LiveOut(DAG.Regions.size()),
+      Live(DAG.Regions.size()), UsedIn(DAG.Regions.size()),
+      DefFrequency(RegionFreq[MIRegion.at(DefMI)]), UseFrequency(0) {
+  assert(!Uses.empty() && "at least one using region");
+
+  // Build data about the register's uses.
+  for (const RegionUsers &RU : Uses) {
+    assert(!RU.Users.empty() && "at least one use per region");
+    Users.push_back(RU.Users);
+    UseFrequency += RegionFreq[RU.Region];
+
+    assert(UsedIn.find_last() != (int)RU.Region && "duplicate region");
+    UsedIn.set(RU.Region);
+    assert(UsedIn.find_last() == (int)RU.Region && "regions not in order");
+  }
 
   // Mark regions in which the rematerializable register is live.
   Register Reg = DefMI->getOperand(0).getReg();
@@ -2142,20 +2193,32 @@ void PreRARematStage::ScoredRemat::update(const BitVector &TargetRegions,
   Score *= SIRegisterInfo::getNumCoveredRegs(Remat->Mask);
 }
 
-MachineInstr *PreRARematStage::rematerialize(const RematReg &Remat,
-                                             BitVector &RecomputeRP) {
+SmallVector<MachineInstr *>
+PreRARematStage::rematerialize(const RematReg &Remat, BitVector &RecomputeRP) {
   const SIInstrInfo *TII = MF.getSubtarget<GCNSubtarget>().getInstrInfo();
   MachineInstr &DefMI = *Remat.DefMI;
   Register Reg = DefMI.getOperand(0).getReg();
   const TargetRegisterClass *RC = DAG.MRI.getRegClass(Reg);
-  Register NewReg = DAG.MRI.createVirtualRegister(RC);
 
-  // Rematerialize the register in the region where it is used.
-  MachineBasicBlock::iterator InsertPos = Remat.UseMI;
-  TII->reMaterialize(*InsertPos->getParent(), InsertPos, NewReg, 0, DefMI,
-                     *DAG.TRI);
-  Remat.UseMI->substituteRegister(Reg, NewReg, 0, *DAG.TRI);
-  MachineInstr *NewMI = Remat.insertMI(Remat.UseRegion, InsertPos, DAG);
+  // Rematerialize the register in every region where it is used.
+  SmallVector<MachineInstr *, 2> NewMIs;
+  for (const auto &[UseRegion, RegionUsers] :
+       zip(Remat.UsedIn.set_bits(), Remat.Users)) {
+    Register NewReg = DAG.MRI.createVirtualRegister(RC);
+    MachineBasicBlock::iterator InsertPos = *RegionUsers.front();
+    TII->reMaterialize(*InsertPos->getParent(), InsertPos, NewReg, 0, DefMI,
+                       *DAG.TRI);
+    REMAT_DEBUG({
+      dbgs() << "  [" << UseRegion << "] Rematerialized (";
+      DefMI.getOperand(0).print(dbgs());
+      dbgs() << " -> ";
+      std::prev(InsertPos)->getOperand(0).print(dbgs());
+      dbgs() << ") above " << *RegionUsers.front();
+    });
+    for (MachineInstr *UserMI : RegionUsers)
+      UserMI->substituteRegister(Reg, NewReg, 0, *DAG.TRI);
+    NewMIs.push_back(Remat.insertMI(UseRegion, InsertPos, DAG));
+  }
 
   // Remove the register from all regions where it is a live-in or live-out
   // and adjust RP targets.
@@ -2202,30 +2265,47 @@ MachineInstr *PreRARematStage::rematerialize(const RematReg &Remat,
 
   DAG.deleteMI(MIRegion.at(&DefMI), &DefMI);
   RescheduleRegions |= Remat.Live;
-  return NewMI;
+  return NewMIs;
 }
 
 void PreRARematStage::rollback(const RollbackReg &Rollback) const {
   const SIInstrInfo *TII = MF.getSubtarget<GCNSubtarget>().getInstrInfo();
-  auto &[RematMI, Remat] = Rollback;
+  auto &[RematMIs, Remat] = Rollback;
+  assert(RematMIs.size() == Remat->Users.size() && "num remat mismatch");
 
   // Recreate the original MI from the first rematerialization. Any
   // rematerialization could do, this is just a simple way to do this.
+  MachineInstr *ModelMI = RematMIs.front();
   unsigned DefRegion = MIRegion.at(Remat->DefMI);
   MachineBasicBlock *MBB = RegionBB[DefRegion];
-  Register Reg = RematMI->getOperand(0).getReg();
-  const TargetRegisterClass *RC = DAG.MRI.getRegClass(Reg);
+  const TargetRegisterClass *RC =
+      DAG.MRI.getRegClass(ModelMI->getOperand(0).getReg());
   Register NewReg = DAG.MRI.createVirtualRegister(RC);
 
   // Re-rematerialize MI in its original region. Note that it may not be
   // rematerialized exactly in the same position as originally within the
   // region, but it should not matter much.
   MachineBasicBlock::iterator InsertPos(DAG.Regions[DefRegion].second);
-  TII->reMaterialize(*MBB, InsertPos, NewReg, 0, *RematMI, *DAG.TRI);
+  TII->reMaterialize(*MBB, InsertPos, NewReg, 0, *ModelMI, *DAG.TRI);
   REMAT_DEBUG(dbgs() << "[" << DefRegion << "] Re-rematerialized as "
-                     << *std::prev(InsertPos));
-  Remat->UseMI->substituteRegister(Reg, NewReg, 0, *DAG.TRI);
-  DAG.deleteMI(Remat->UseRegion, RematMI);
+                     << *std::prev(InsertPos););
+
+  // Use re-rematerialized register in all regions, and delete all
+  // rematerializations.
+  for (const auto &[RematMI, UseRegion, RegionUsers] :
+       zip(RematMIs, Remat->UsedIn.set_bits(), Remat->Users)) {
+    REMAT_DEBUG({
+      dbgs() << "  [" << UseRegion << "] Deleted (";
+      RematMI->getOperand(0).print(dbgs());
+      dbgs() << " -> ";
+      std::prev(InsertPos)->getOperand(0).print(dbgs());
+      dbgs() << ")\n";
+    });
+    Register Reg = RematMI->getOperand(0).getReg();
+    for (MachineInstr *UseMI : RegionUsers)
+      UseMI->substituteRegister(Reg, NewReg, 0, *DAG.TRI);
+    DAG.deleteMI(UseRegion, RematMI);
+  }
   Remat->insertMI(DefRegion, InsertPos, DAG);
 
   // Re-add the register as a live-in/live-out in all regions it used to be

@@ -413,24 +413,52 @@ public:
 /// effects on function latency.
 class PreRARematStage : public GCNSchedStage {
 private:
+  /// A list of instruction users for a register in a particular region.
+  struct RegionUsers {
+    /// The region.
+    unsigned Region;
+    /// List of users. The first user in the list is always the earliest one in
+    /// the region. Other users are in an arbitrary order.
+    SmallVector<MachineInstr *> Users;
+
+    RegionUsers(unsigned Region, MachineInstr *User)
+        : Region(Region), Users({User}) {}
+
+    void addUser(MachineInstr *NewUser, const LiveIntervals &LIS) {
+      MachineInstr *&FirstUser = Users.front();
+
+      if (LIS.getInstructionIndex(*NewUser) <
+          LIS.getInstructionIndex(*FirstUser)) {
+        // First use in the list should always be the earliest in the region.
+        Users.push_back(FirstUser);
+        FirstUser = NewUser;
+      } else {
+        Users.push_back(NewUser);
+      }
+    }
+
+    bool operator<(const RegionUsers &O) const { return Region < O.Region; }
+  };
+
   /// Groups information about a rematerializable register.
   struct RematReg {
     /// Single MI defining the rematerializable register.
     MachineInstr *DefMI;
-    /// Single user of the rematerializable register.
-    MachineInstr *UseMI;
-    /// Using region.
-    unsigned UseRegion;
     /// Regions in which the register is live-in/live-out/live anywhere.
     BitVector LiveIn, LiveOut, Live;
+    /// Regions in which the register is used.
+    BitVector UsedIn;
+    /// Users per region, in the order of the set bits in \ref UsedIn. The first
+    /// user of each region should be the earliest user in the region.
+    SmallVector<SmallVector<MachineInstr *>> Users;
     /// The rematerializable register's lane bitmask.
     LaneBitmask Mask;
     /// Frequency of region defining the register.
     unsigned DefFrequency;
-    /// Frequency of region using the register.
+    /// Accumulated frequency of all regions using the register.
     unsigned UseFrequency;
 
-    RematReg(MachineInstr *DefMI, MachineInstr *UseMI,
+    RematReg(MachineInstr *DefMI, ArrayRef<RegionUsers> Uses,
              GCNScheduleDAGMILive &DAG,
              const DenseMap<MachineInstr *, unsigned> &MIRegion,
              ArrayRef<uint64_t> RegionFreq);
@@ -446,7 +474,7 @@ private:
     /// pressure in the region.
     bool isBeneficialRegion(unsigned I) const {
       assert(I < Live.size() && "region index out of range");
-      return LiveIn[I] && LiveOut[I] && I != UseRegion;
+      return LiveIn[I] && LiveOut[I] && !UsedIn[I];
     }
 
     /// Determines whether rematerializing the register can but is not
@@ -525,9 +553,9 @@ private:
   /// List of rematerializable registers.
   SmallVector<RematReg, 16> RematRegs;
 
-  using RollbackReg = std::pair<MachineInstr *, const RematReg *>;
+  using RollbackReg = std::pair<SmallVector<MachineInstr *>, const RematReg *>;
   /// List of rematerializations to rollback if rematerialization does not end
-  /// up being beneficial. Each element pairs the MI created during
+  /// up being beneficial. Each element pairs MIs created during
   /// rematerialization to the original rematerializable register.
   SmallVector<RollbackReg> Rollbackable;
 
@@ -559,8 +587,9 @@ private:
   /// live-in lists in the DAG and updates RP targets in all affected regions,
   /// which are also marked in \ref RescheduleRegions. Regions in which RP
   /// target updates are heuristic in nature are set in \p RecomputeRP. Returns
-  /// the newly created MI.
-  MachineInstr *rematerialize(const RematReg &Remat, BitVector &RecomputeRP);
+  /// the newly created MIs, corresponding in order to the \p Remat uses.
+  SmallVector<MachineInstr *> rematerialize(const RematReg &Remat,
+                                            BitVector &RecomputeRP);
 
   /// Rollbacks \p Remat.
   void rollback(const RollbackReg &Rollback) const;
