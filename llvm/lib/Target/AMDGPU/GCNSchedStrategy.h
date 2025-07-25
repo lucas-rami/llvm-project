@@ -16,6 +16,7 @@
 #include "GCNRegPressure.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/PointerIntPair.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/MC/LaneBitmask.h"
@@ -458,6 +459,9 @@ private:
     /// Accumulated frequency of all regions using the register.
     unsigned UseFrequency;
 
+    SmallVector<PointerIntPair<RematReg *, 1, bool>, 2> UseOprds;
+    SmallVector<RematReg *> DefUsers;
+
     RematReg(MachineInstr *DefMI, ArrayRef<RegionUsers> Uses,
              GCNScheduleDAGMILive &DAG,
              const DenseMap<MachineInstr *, unsigned> &MIRegion,
@@ -574,6 +578,15 @@ private:
   /// are actually not, and returns whether there were any such regions.
   bool verifyRPTargets(const BitVector &Regions);
 
+  /// \p Returns true if all the uses in \p InstToRemat defined at \p
+  /// OriginalIdx are live at \p RematIdx. This only checks liveness of virtual
+  /// reg uses.
+  bool allUsesAvailableAt(const MachineInstr *InstToRemat,
+                          SlotIndex OriginalIdx, SlotIndex RematIdx) const;
+
+  bool addIfRematerializable(unsigned DefRegion, MachineInstr &DefMI,
+                             ArrayRef<uint64_t> RegionFreq);
+
   /// Collects all rematerializable registers and appends them to \ref
   /// RematRegs. Returns whether any rematerializable register was found.
   bool collectRematRegs(ArrayRef<uint64_t> RegionFreq);
@@ -602,12 +615,6 @@ private:
   /// rematerializations and resets live-ins/RP in all regions impacted by the
   /// stage to their pre-stage values.
   void finalizeGCNSchedStage() override;
-
-  /// \p Returns true if all the uses in \p InstToRemat defined at \p
-  /// OriginalIdx are live at \p RematIdx. This only checks liveness of virtual
-  /// reg uses.
-  bool allUsesAvailableAt(const MachineInstr *InstToRemat,
-                          SlotIndex OriginalIdx, SlotIndex RematIdx) const;
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   void printTargetRegions(bool PrintAll = false) const;

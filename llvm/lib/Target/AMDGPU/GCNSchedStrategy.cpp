@@ -1992,6 +1992,53 @@ void PreRARematStage::setObjective() {
   assert(TargetRegions.any() && "there should be at least one target region");
 }
 
+bool PreRARematStage::addIfRematerializable(unsigned DefRegion,
+                                            MachineInstr &DefMI,
+                                            ArrayRef<uint64_t> RegionFreq) {
+  // The instruction must be trivially rematerializable.
+  if (!isTriviallyReMaterializable(DefMI))
+    return false;
+
+  // We only support rematerializing virtual registers with one
+  // definition.
+  Register Reg = DefMI.getOperand(0).getReg();
+  if (!Reg.isVirtual() || !DAG.MRI.hasOneDef(Reg))
+    return false;
+
+  // Analyze MI uses.
+  auto MIUsers = DAG.MRI.use_nodbg_instructions(Reg);
+  if (MIUsers.empty())
+    return false;
+  SmallVector<RegionUsers> Uses;
+  SmallDenseMap<unsigned, unsigned, 4> RegionToRegionUsesIdx;
+  for (MachineInstr &UseMI : MIUsers) {
+    auto UseRegionIt = MIRegion.find(&UseMI);
+    if (UseRegionIt == MIRegion.end())
+      return false;
+
+    // Do not rematerialize an instruction if any of its uses is in the
+    // same region.
+    // FIXME: Allow for rematerializing while keeping the original
+    // instruction if the register is used in its own region.
+    unsigned UseRegion = UseRegionIt->second;
+    if (UseRegion == DefRegion)
+      return false;
+
+    auto RegionUsesIdx = RegionToRegionUsesIdx.find(UseRegion);
+    if (RegionUsesIdx == RegionToRegionUsesIdx.end()) {
+      RegionToRegionUsesIdx.insert({UseRegion, Uses.size()});
+      Uses.emplace_back(UseRegion, &UseMI);
+    } else {
+      Uses[RegionUsesIdx->second].addUser(&UseMI, *DAG.LIS);
+    }
+  }
+  sort(Uses);
+
+  // Add the instruction to the rematerializable list.
+  RematRegs.emplace_back(&DefMI, Uses, DAG, MIRegion, RegionFreq);
+  return true;
+}
+
 bool PreRARematStage::collectRematRegs(ArrayRef<uint64_t> RegionFreq) {
   assert(RegionFreq.size() == DAG.Regions.size());
 
@@ -1999,94 +2046,51 @@ bool PreRARematStage::collectRematRegs(ArrayRef<uint64_t> RegionFreq) {
   // regions containing rematerializable instructions.
   DAG.updateRegionLiveOuts();
 
-  // Set of registers already marked for potential remterialization; used for
-  // remat chains checks.
-  DenseSet<Register> RematRegSet;
-
-  SmallDenseMap<unsigned, unsigned, 4> RegionToRegionUsesIdx;
-
-  // Identify rematerializable instructions in the function.
+  DenseMap<unsigned, RematReg *> RegToRemat;
   for (unsigned I = 0, E = DAG.Regions.size(); I != E; ++I) {
     auto Region = DAG.Regions[I];
     for (auto MI = Region.first; MI != Region.second; ++MI) {
-      // The instruction must be trivially rematerializable.
-      MachineInstr &DefMI = *MI;
-      if (!isTriviallyReMaterializable(DefMI))
+      if (addIfRematerializable(I, *MI, RegionFreq))
+        RegToRemat.insert({MI->getOperand(0).getReg(), &RematRegs.back()});
+    }
+  }
+
+  for (RematReg &Remat : RematRegs) {
+    for (MachineOperand &MO : Remat.DefMI->operands()) {
+      if (!MO.isReg() || !MO.readsReg() || MO.isDef())
         continue;
-
-      // We only support rematerializing virtual registers with one
-      // definition.
-      Register Reg = DefMI.getOperand(0).getReg();
-      if (!Reg.isVirtual() || !DAG.MRI.hasOneDef(Reg))
+      Register Reg = MO.getReg();
+      if (!Reg.isVirtual()) {
+        // If the register is physical then from the restrictions imposed on
+        // trivially rematerializable instructions it is either constant or
+        // ignorable, so we do not have to worry about it.
         continue;
-
-      // Analyze MI uses.
-      auto MIUsers = DAG.MRI.use_nodbg_instructions(Reg);
-      if (MIUsers.empty())
-        continue;
-
-      SmallVector<RegionUsers> Uses;
-      bool Stop = false;
-      RegionToRegionUsesIdx.clear();
-      for (MachineInstr &UseMI : MIUsers) {
-        auto UseRegionIt = MIRegion.find(&UseMI);
-        if (UseRegionIt == MIRegion.end()) {
-          Stop = true;
-          break;
-        }
-
-        // Do not rematerialize an instruction if any of its uses is in the
-        // same region.
-        // FIXME: Allow for rematerializing while keeping the original
-        // instruction if the register is used in its own region.
-        unsigned UseRegion = UseRegionIt->second;
-        if (UseRegion == I) {
-          Stop = true;
-          break;
-        }
-
-        // Do not rematerialize an instruction if it uses or is used by an
-        // instruction that we have designated for rematerialization.
-        // FIXME: Allow for rematerialization chains: this requires 1. updating
-        // remat points to account for uses that are rematerialized, and 2.
-        // either rematerializing the candidates in careful ordering, or
-        // deferring the MBB RP walk until the entire chain has been
-        // rematerialized.
-        const MachineOperand &UseFirstMO = UseMI.getOperand(0);
-        if ((UseFirstMO.isReg() && RematRegSet.contains(UseFirstMO.getReg())) ||
-            llvm::any_of(
-                DefMI.operands(), [&RematRegSet](const MachineOperand &MO) {
-                  return MO.isReg() && RematRegSet.contains(MO.getReg());
-                })) {
-          Stop = true;
-          break;
-        }
-
-        // Do not rematerialize an instruction it it uses registers that aren't
-        // available at its use. This ensures that we are not extending any live
-        // range while rematerializing.
-        SlotIndex DefIdx = DAG.LIS->getInstructionIndex(DefMI);
-        SlotIndex UseIdx = DAG.LIS->getInstructionIndex(UseMI).getRegSlot(true);
-        if (!allUsesAvailableAt(&DefMI, DefIdx, UseIdx)) {
-          Stop = true;
-          break;
-        }
-
-        auto RegionUsesIdx = RegionToRegionUsesIdx.find(UseRegion);
-        if (RegionUsesIdx == RegionToRegionUsesIdx.end()) {
-          RegionToRegionUsesIdx.insert({UseRegion, Uses.size()});
-          Uses.emplace_back(UseRegion, &UseMI);
-        } else {
-          Uses[RegionUsesIdx->second].addUser(&UseMI, *DAG.LIS);
-        }
       }
-      if (Stop)
-        continue;
-      sort(Uses);
 
-      // Add the instruction to the rematerializable list.
-      RematRegSet.insert(Reg);
-      RematRegs.emplace_back(&DefMI, Uses, DAG, MIRegion, RegionFreq);
+      // Determine whether the read register is itself rematerializable.
+      RematReg *MORemat = nullptr;
+      if (auto It = RegToRemat.find(Reg); It != RegToRemat.end()) {
+        MORemat = It->second;
+        Remat.DefUsers.push_back(MORemat);
+      }
+
+      // Determine whether the read register is available at all uses.
+      bool IsAvailable = true;
+      SlotIndex DefIdx = DAG.LIS->getInstructionIndex(*Remat.DefMI);
+      for (ArrayRef<MachineInstr *> RegionUsers : Remat.Users) {
+        for (const MachineInstr *UseMI : RegionUsers) {
+          SlotIndex UseIdx =
+              DAG.LIS->getInstructionIndex(*UseMI).getRegSlot(true);
+          if (!allUsesAvailableAt(Remat.DefMI, DefIdx, UseIdx)) {
+            IsAvailable = false;
+            break;
+          }
+        }
+        if (!IsAvailable)
+          break;
+      }
+
+      Remat.UseOprds.emplace_back(MORemat, IsAvailable);
     }
   }
 
