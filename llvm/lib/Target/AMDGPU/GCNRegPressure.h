@@ -69,6 +69,10 @@ struct GCNRegPressure {
   }
   unsigned getSGPRTuplesWeight() const { return Value[TOTAL_KINDS + SGPR]; }
 
+  unsigned getRCNum(const TargetRegisterClass *RC, const SIRegisterInfo *STI) {
+    return Value[getRegKind(RC, STI)];
+  }
+
   unsigned getOccupancy(const GCNSubtarget &ST,
                         unsigned DynamicVGPRBlockSize) const {
     return std::min(ST.getOccupancyWithNumSGPRs(getSGPRNum()),
@@ -76,10 +80,18 @@ struct GCNRegPressure {
                                                 DynamicVGPRBlockSize));
   }
 
-  void inc(unsigned Reg,
-           LaneBitmask PrevMask,
-           LaneBitmask NewMask,
+  /// Accounts for a pressure change induced register \p Reg's mask going from
+  /// \p PrevMask to \p NewMask.
+  void inc(unsigned Reg, LaneBitmask PrevMask, LaneBitmask NewMask,
            const MachineRegisterInfo &MRI);
+
+  /// Accounts for a pressure change of \p DiffNumCoveredRegs 32-bit registers
+  /// (negative values indicate pressure decreases) in register class \p RC. \p
+  /// AccountTuple indicates, for a tuple RC, whether the tuple register of
+  /// concern is being defined for the first time or killed entirely; the value
+  /// is irrelevant for non-tuple RCs.
+  void inc(int DiffNumCoveredRegs, bool AccountTuple,
+           const TargetRegisterClass *RC, const MachineRegisterInfo &MRI);
 
   bool higherOccupancy(const GCNSubtarget &ST, const GCNRegPressure &O,
                        unsigned DynamicVGPRBlockSize) const {
@@ -198,9 +210,7 @@ public:
   bool isSaveBeneficial(Register Reg) const;
 
   /// Saves virtual register \p Reg with lanemask \p Mask.
-  void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
-    RP.inc(Reg, Mask, LaneBitmask::getNone(), MRI);
-  }
+  void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI);
 
   /// Whether the current RP is at or below the defined pressure target.
   bool satisfied() const;

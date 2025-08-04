@@ -41,31 +41,30 @@ unsigned GCNRegPressure::getRegKind(const TargetRegisterClass *RC,
   return STI->isSGPRClass(RC) ? SGPR : (STI->isAGPRClass(RC) ? AGPR : VGPR);
 }
 
-void GCNRegPressure::inc(unsigned Reg,
-                         LaneBitmask PrevMask,
-                         LaneBitmask NewMask,
+void GCNRegPressure::inc(unsigned Reg, LaneBitmask PrevMask,
+                         LaneBitmask NewMask, const MachineRegisterInfo &MRI) {
+  int PrevNum = SIRegisterInfo::getNumCoveredRegs(PrevMask);
+  int NewNum = SIRegisterInfo::getNumCoveredRegs(NewMask);
+  assert(PrevNum == NewNum || (NewMask < PrevMask && NewNum < PrevNum) ||
+         (PrevMask < NewMask && PrevNum < NewNum) &&
+             "mask and num covered regs must be in the same order");
+  inc(NewNum - PrevNum, PrevMask.none() || NewMask.none(), MRI.getRegClass(Reg),
+      MRI);
+}
+
+void GCNRegPressure::inc(int DiffNumCoveredRegs, bool AccountTuple,
+                         const TargetRegisterClass *RC,
                          const MachineRegisterInfo &MRI) {
-  unsigned NewNumCoveredRegs = SIRegisterInfo::getNumCoveredRegs(NewMask);
-  unsigned PrevNumCoveredRegs = SIRegisterInfo::getNumCoveredRegs(PrevMask);
-  if (NewNumCoveredRegs == PrevNumCoveredRegs)
+  if (!DiffNumCoveredRegs)
     return;
 
-  int Sign = 1;
-  if (NewMask < PrevMask) {
-    std::swap(NewMask, PrevMask);
-    std::swap(NewNumCoveredRegs, PrevNumCoveredRegs);
-    Sign = -1;
-  }
-  assert(PrevMask < NewMask && PrevNumCoveredRegs < NewNumCoveredRegs &&
-         "prev mask should always be lesser than new");
-
-  const TargetRegisterClass *RC = MRI.getRegClass(Reg);
+  int Sign = DiffNumCoveredRegs > 0 ? 1 : -1;
   const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
   const SIRegisterInfo *STI = static_cast<const SIRegisterInfo *>(TRI);
   unsigned RegKind = getRegKind(RC, STI);
   if (TRI->getRegSizeInBits(*RC) != 32) {
     // Reg is from a tuple register class.
-    if (PrevMask.none()) {
+    if (AccountTuple) {
       unsigned TupleIdx = TOTAL_KINDS + RegKind;
       Value[TupleIdx] += Sign * TRI->getRegClassWeight(RC).RegWeight;
     }
@@ -87,8 +86,9 @@ void GCNRegPressure::inc(unsigned Reg,
     // However, the mask calculation yields `~PrevMask & NewMask = 0b1101`, and
     // calling `getNumCoveredRegs` returns 2 instead of 1. This incorrect
     // calculation can lead to integer overflow when Sign = -1.
-    Sign *= NewNumCoveredRegs - PrevNumCoveredRegs;
+    Sign = DiffNumCoveredRegs;
   }
+  assert(static_cast<int>(Value[RegKind]) + Sign >= 0 && "RP underflow");
   Value[RegKind] += Sign;
 }
 
@@ -411,11 +411,31 @@ bool GCNRPTarget::isSaveBeneficial(Register Reg) const {
     return RP.getSGPRNum() > MaxSGPRs;
   unsigned NumVGPRs =
       SRI->isAGPRClass(RC) ? RP.getAGPRNum() : RP.getArchVGPRNum();
+  if (!NumVGPRs)
+    return false;
   // The addressable limit must always be respected.
   if (NumVGPRs > MaxVGPRs)
     return true;
   // For unified RFs, combined VGPR usage limit must be respected as well.
   return UnifiedRF && RP.getVGPRNum(true) > MaxUnifiedVGPRs;
+}
+
+void GCNRPTarget::saveReg(Register Reg, LaneBitmask Mask,
+                          const MachineRegisterInfo &MRI) {
+  int NumRegs = SIRegisterInfo::getNumCoveredRegs(Mask);
+  if (!NumRegs)
+    return;
+
+  const TargetRegisterClass *RC = MRI.getRegClass(Reg);
+  const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
+  const SIRegisterInfo *STI = static_cast<const SIRegisterInfo *>(TRI);
+
+  // Make sure we do not underflow the number of registers by saving beyond the
+  // actual number of registers used in the class. Since the class is meant to
+  // be used in heuristical contexts, this is not necessarily indicative of
+  // incorrect logic in the caller.
+  NumRegs = std::min(NumRegs, static_cast<int>(RP.getRCNum(RC, STI)));
+  RP.inc(-NumRegs, /*AccountTuple=*/true, RC, MRI);
 }
 
 bool GCNRPTarget::satisfied() const {
