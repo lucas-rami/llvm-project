@@ -20,6 +20,7 @@
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/LiveRegMatrix.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/VirtRegMap.h"
 #include "llvm/InitializePasses.h"
 
@@ -77,11 +78,11 @@ bool AMDGPUEliminateAGPRToVGPRCopyImpl::run(MachineFunction &MF) const {
 
   for (MachineBasicBlock &MBB : MF) {
     for (MachineInstr &CopyMI : make_early_inc_range(MBB)) {
-      // Find full copies only...
+      // Find full copies...
       if (!CopyMI.isFullCopy())
         continue;
 
-      // ... whose destination was mapped to a VGPR...
+      // ... whose destination was mapped to a VGPR or AGPR...
       Register DstReg = CopyMI.getOperand(0).getReg();
       if (!DstReg.isVirtual())
         continue;
@@ -89,7 +90,7 @@ bool AMDGPUEliminateAGPRToVGPRCopyImpl::run(MachineFunction &MF) const {
       if (!DstPhysReg)
         continue;
       const TargetRegisterClass *DstRC = TRI.getPhysRegBaseClass(DstPhysReg);
-      if (!TRI.isVGPRClass(DstRC) || TRI.hasAGPRs(DstRC))
+      if (!TRI.hasVectorRegisters(DstRC) || TRI.hasSGPRs(DstRC))
         continue;
 
       // ... and whose source was mapped to an AGPR.
@@ -103,7 +104,17 @@ bool AMDGPUEliminateAGPRToVGPRCopyImpl::run(MachineFunction &MF) const {
       if (!TRI.isAGPRClass(SrcRC))
         continue;
 
-      LLVM_DEBUG(dbgs() << "AGPR->VGPR copy: " << CopyMI);
+      bool DstIsAGPR = TRI.hasAGPRs(DstRC);
+
+      LLVM_DEBUG({
+        dbgs() << "AGPR->AVGPR copy: " << CopyMI;
+        dbgs() << "                  "
+               << printReg(DstReg, &TRI, CopyMI.getOperand(0).getSubReg(), &MRI)
+               << " <-> " << printReg(DstPhysReg, &TRI, 0, &MRI) << "\n";
+        dbgs() << "                  "
+               << printReg(SrcReg, &TRI, CopyMI.getOperand(1).getSubReg(), &MRI)
+               << " <-> " << printReg(SrcPhysReg, &TRI, 0, &MRI) << "\n";
+      });
 
       LiveInterval &SrcLI = LIS.getInterval(SrcReg);
       const VNInfo *SrcVNI = SrcLI.getVNInfoAt(LIS.getInstructionIndex(CopyMI));
@@ -113,14 +124,24 @@ bool AMDGPUEliminateAGPRToVGPRCopyImpl::run(MachineFunction &MF) const {
           all_of(MRI.use_operands(DstReg), [&](const MachineOperand &MO) {
             // Destination's use must be src0 or src1 operands of an MFMA.
             const MachineInstr &UseMI = *MO.getParent();
-            if (!SIInstrInfo::isMFMA(UseMI)) {
-              LLVM_DEBUG(dbgs() << "  Non-MFMA user: " << UseMI);
-              return false;
-            }
-            if (&MO != TII.getNamedOperand(UseMI, AMDGPU::OpName::src0) &&
-                &MO != TII.getNamedOperand(UseMI, AMDGPU::OpName::src1)) {
-              LLVM_DEBUG(dbgs() << "  Incompatible MFMA operand: " << UseMI);
-              return false;
+            if (!DstIsAGPR) {
+              if (SIInstrInfo::isMFMA(UseMI)) {
+                if (&MO != TII.getNamedOperand(UseMI, AMDGPU::OpName::src0) &&
+                    &MO != TII.getNamedOperand(UseMI, AMDGPU::OpName::src1)) {
+                  LLVM_DEBUG(dbgs() << "  Incompatible MFMA operand: " << UseMI);
+                  return false;
+                }
+              } else if (UseMI.isFullCopy()){
+                if (&UseMI.getOperand(1) != &MO) {
+                  LLVM_DEBUG(dbgs() << "  Incompatible COPY operand: " << UseMI);
+                  return false;
+                }
+              } else {
+                LLVM_DEBUG(dbgs() << "  Incompatible user: " << UseMI);
+                return false;
+              }
+            } else {
+              LLVM_DEBUG(dbgs() << " Skipping user check (dst is AGPR)\n");
             }
 
             // Source must be available at use point.
@@ -134,7 +155,7 @@ bool AMDGPUEliminateAGPRToVGPRCopyImpl::run(MachineFunction &MF) const {
       if (!AllUsesCompatible)
         continue;
 
-      LLVM_DEBUG(dbgs() << "  -> Eliminating " << CopyMI);
+      LLVM_DEBUG(dbgs() << "  -> Eliminated\n");
       ++NumEliminated;
 
       // Remove the copy's destination register.
