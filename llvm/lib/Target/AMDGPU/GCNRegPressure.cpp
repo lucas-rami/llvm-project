@@ -45,54 +45,54 @@ unsigned GCNRegPressure::getRegKind(const TargetRegisterClass *RC,
                     : (STI->isVectorSuperClass(RC) ? AVGPR : VGPR));
 }
 
-void GCNRegPressure::inc(unsigned Reg,
-                         LaneBitmask PrevMask,
-                         LaneBitmask NewMask,
+void GCNRegPressure::inc(unsigned Reg, LaneBitmask PrevMask,
+                         LaneBitmask NewMask, const MachineRegisterInfo &MRI) {
+  int PrevNum = SIRegisterInfo::getNumCoveredRegs(PrevMask);
+  int NewNum = SIRegisterInfo::getNumCoveredRegs(NewMask);
+  assert(PrevNum == NewNum || (NewMask < PrevMask && NewNum < PrevNum) ||
+         (PrevMask < NewMask && PrevNum < NewNum) &&
+             "mask and num covered regs must be in the same order");
+  // Pressure scales with number of new registers covered by the new mask.
+  // Note when true16 is enabled, we can no longer safely use the following
+  // approach to calculate the difference in the number of 32-bit registers
+  // between two masks:
+  //
+  // Sign *= SIRegisterInfo::getNumCoveredRegs(~PrevMask & NewMask);
+  //
+  // The issue is that the mask calculation `~PrevMask & NewMask` doesn't
+  // properly account for partial usage of a 32-bit register when dealing with
+  // 16-bit registers.
+  //
+  // Consider this example:
+  // Assume PrevMask = 0b0010 and NewMask = 0b1111. Here, the correct register
+  // usage difference should be 1, because even though PrevMask uses only half
+  // of a 32-bit register, it should still be counted as a full register use.
+  // However, the mask calculation yields `~PrevMask & NewMask = 0b1101`, and
+  // calling `getNumCoveredRegs` returns 2 instead of 1. This incorrect
+  // calculation can lead to integer overflow when NewMask < PrevMask.
+  inc(NewNum - PrevNum, PrevMask.none() || NewMask.none(), MRI.getRegClass(Reg),
+      MRI);
+}
+
+void GCNRegPressure::inc(int DiffNumRegs, bool AccountTuple,
+                         const TargetRegisterClass *RC,
                          const MachineRegisterInfo &MRI) {
-  unsigned NewNumCoveredRegs = SIRegisterInfo::getNumCoveredRegs(NewMask);
-  unsigned PrevNumCoveredRegs = SIRegisterInfo::getNumCoveredRegs(PrevMask);
-  if (NewNumCoveredRegs == PrevNumCoveredRegs)
+  if (!DiffNumRegs)
     return;
 
-  int Sign = 1;
-  if (NewMask < PrevMask) {
-    std::swap(NewMask, PrevMask);
-    std::swap(NewNumCoveredRegs, PrevNumCoveredRegs);
-    Sign = -1;
-  }
-  assert(PrevMask < NewMask && PrevNumCoveredRegs < NewNumCoveredRegs &&
-         "prev mask should always be lesser than new");
-
-  const TargetRegisterClass *RC = MRI.getRegClass(Reg);
+  int Sign = DiffNumRegs > 0 ? 1 : -1;
   const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
   const SIRegisterInfo *STI = static_cast<const SIRegisterInfo *>(TRI);
   unsigned RegKind = getRegKind(RC, STI);
   if (TRI->getRegSizeInBits(*RC) != 32) {
-    // Reg is from a tuple register class.
-    if (PrevMask.none()) {
+    // RC is a tuple register class.
+    if (AccountTuple) {
       unsigned TupleIdx = TOTAL_KINDS + RegKind;
       Value[TupleIdx] += Sign * TRI->getRegClassWeight(RC).RegWeight;
     }
-    // Pressure scales with number of new registers covered by the new mask.
-    // Note when true16 is enabled, we can no longer safely use the following
-    // approach to calculate the difference in the number of 32-bit registers
-    // between two masks:
-    //
-    // Sign *= SIRegisterInfo::getNumCoveredRegs(~PrevMask & NewMask);
-    //
-    // The issue is that the mask calculation `~PrevMask & NewMask` doesn't
-    // properly account for partial usage of a 32-bit register when dealing with
-    // 16-bit registers.
-    //
-    // Consider this example:
-    // Assume PrevMask = 0b0010 and NewMask = 0b1111. Here, the correct register
-    // usage difference should be 1, because even though PrevMask uses only half
-    // of a 32-bit register, it should still be counted as a full register use.
-    // However, the mask calculation yields `~PrevMask & NewMask = 0b1101`, and
-    // calling `getNumCoveredRegs` returns 2 instead of 1. This incorrect
-    // calculation can lead to integer overflow when Sign = -1.
-    Sign *= NewNumCoveredRegs - PrevNumCoveredRegs;
+    Sign = DiffNumRegs;
   }
+  assert(static_cast<int>(Value[RegKind]) + Sign >= 0 && "RP underflow");
   Value[RegKind] += Sign;
 }
 
@@ -415,11 +415,33 @@ bool GCNRPTarget::isSaveBeneficial(Register Reg) const {
     return RP.getSGPRNum() > MaxSGPRs;
   unsigned NumVGPRs =
       SRI->isAGPRClass(RC) ? RP.getAGPRNum() : RP.getArchVGPRNum();
+  if (!NumVGPRs)
+    return false;
   // The addressable limit must always be respected.
   if (NumVGPRs > MaxVGPRs)
     return true;
   // For unified RFs, combined VGPR usage limit must be respected as well.
   return UnifiedRF && RP.getVGPRNum(true) > MaxUnifiedVGPRs;
+}
+
+void GCNRPTarget::saveReg(Register Reg, LaneBitmask Mask,
+                          const MachineRegisterInfo &MRI) {
+  int NumRegs = SIRegisterInfo::getNumCoveredRegs(Mask);
+  if (!NumRegs)
+    return;
+
+  const TargetRegisterClass *RC = MRI.getRegClass(Reg);
+  const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
+  const SIRegisterInfo *STI = static_cast<const SIRegisterInfo *>(TRI);
+
+  // Make sure we do not underflow the number of registers by saving beyond the
+  // actual number of registers used in the RC. Since the class is meant to be
+  // used as part of heuristics, this is not necessarily indicative of incorrect
+  // logic from the caller.
+  NumRegs = std::min(NumRegs, static_cast<int>(RP.getRCNum(RC, STI)));
+  // We always consider that the whole register is saved which is equivalent to
+  // killing it entirely, so AccountTuple is always true.
+  RP.inc(-NumRegs, /*AccountTuple=*/true, RC, MRI);
 }
 
 bool GCNRPTarget::satisfied() const {
