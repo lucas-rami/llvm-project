@@ -16,6 +16,7 @@
 #include "GCNRegPressure.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/PointerIntPair.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include <cstdint>
@@ -443,91 +444,81 @@ public:
 /// effects on function latency.
 class PreRARematStage : public GCNSchedStage {
 private:
-  /// A list of instruction users for a register in a particular region.
-  struct RegionUsers {
-    /// The region.
-    unsigned Region;
-    /// List of users. The first user in the list is always the earliest one in
-    /// the region. Other users are in an arbitrary order.
-    SmallVector<MachineInstr *, 4> Users;
-
-    RegionUsers(unsigned Region, MachineInstr *User)
-        : Region(Region), Users({User}) {}
-
-    void addUser(MachineInstr *NewUser, const LiveIntervals &LIS) {
-      MachineInstr *&FirstUser = Users.front();
-
-      if (LIS.getInstructionIndex(*NewUser) <
-          LIS.getInstructionIndex(*FirstUser)) {
-        // First use in the list should always be the earliest in the region.
-        Users.push_back(FirstUser);
-        FirstUser = NewUser;
-      } else {
-        Users.push_back(NewUser);
-      }
-    }
-
-    bool operator<(const RegionUsers &O) const { return Region < O.Region; }
-  };
-
-  /// Groups information about a rematerializable register.
-  struct RematReg {
+  /// A candidate register to rematerialize.
+  struct CandidateReg {
     /// Single MI defining the rematerializable register.
     MachineInstr *DefMI;
     /// Regions in which the register is live-in/live-out/live anywhere.
     BitVector LiveIn, LiveOut, Live;
-    /// Regions in which the register is used.
-    BitVector UsedIn;
-    /// Users per region, in the order of the set bits in \ref UsedIn. The first
-    /// user of each region is the earliest user in the region.
-    SmallVector<SmallVector<MachineInstr *, 4>> Users;
     /// The rematerializable register's lane bitmask.
     LaneBitmask Mask;
+    /// Region of defining instruction.
+    unsigned DefRegion;
     /// Frequency of region defining the register. 0 when unknown.
     unsigned DefFrequency;
+
+    CandidateReg(MachineInstr *DefMI, unsigned DefRegion, unsigned DefFrequency,
+                 GCNScheduleDAGMILive &DAG);
+
+    bool isAvailableAtUse(SlotIndex DefIdx, SlotIndex UseIdx,
+                          const LiveInterval &LI) const;
+  };
+
+  struct RematReg {
+    const CandidateReg CandReg;
+
+    /// Users of the rematerializable register, grouped by region. The first MI
+    /// in each value list is guarantted to be the first user in the key region.
+    SmallDenseMap<unsigned, SmallVector<MachineInstr *, 4>, 2> Users;
     /// Accumulated frequency of all regions using the register, 0 when the
     /// frequency of at least one using region is unknown.
     unsigned UseFrequency;
 
-    RematReg(MachineInstr *DefMI, ArrayRef<RegionUsers> Uses,
-             GCNScheduleDAGMILive &DAG,
-             const DenseMap<MachineInstr *, unsigned> &MIRegion,
+    struct Dependency {
+      bool AvailableAtUses : 1;
+      unsigned char : 7; // Padding.
+      uint32_t Idx : 24;
+
+      static const uint32_t NoRematIdx = 0x00FFFFFF;
+
+      Dependency(bool AvailableAtUses, unsigned RematIdx)
+          : AvailableAtUses(AvailableAtUses) {
+        // FIXME: not great to hard fail, try to fail silently (in extreme
+        // cases, only prevent remats involving dependencies above the max
+        // index).
+        assert(RematIdx < NoRematIdx && "remat index too high");
+        Idx = RematIdx;
+      }
+    };
+    SmallVector<Dependency, 2> Deps;
+    unsigned RefCount = 0;
+
+    RematReg(const CandidateReg &&CandReg, GCNScheduleDAGMILive &DAG,
+             const DenseMap<MachineInstr *, unsigned> MIRegion,
              ArrayRef<uint64_t> RegionFreq);
 
     /// Returns whether the regions at which the register is live intersects
     /// with the \p Target regions.
     bool intersectWithTarget(BitVector Target) const {
-      Target &= Live;
+      Target &= CandReg.Live;
       return Target.any();
     }
 
     /// Returns whether is is always beneficial to rematerialize this register.
-    bool isAlwaysBeneficial() const {
-      // When the using region is executed a single time, we know
-      // rematerializing will be beneficial whatever the defining region's
-      // frequency.
-      if (UseFrequency == 1)
-        return true;
-      // When there is uncertainty on the defining or using frequency, we err on
-      // the conservative side and do not consider the rematerialization always
-      // beneficial.
-      if (!DefFrequency || !UseFrequency)
-        return false;
-      return UseFrequency <= DefFrequency;
-    }
+    bool isAlwaysBeneficial() const;
 
     /// Determines whether rematerializing the register is guaranteed to reduce
     /// pressure in the region.
     bool isBeneficialRegion(unsigned I) const {
-      assert(I < Live.size() && "region index out of range");
-      return LiveIn[I] && LiveOut[I] && !UsedIn[I];
+      assert(I < CandReg.Live.size() && "region index out of range");
+      return CandReg.LiveIn[I] && CandReg.LiveOut[I] && !Users.contains(I);
     }
 
     /// Determines whether rematerializing the register can but is not
     /// guaranteed to reduce pressure in the region.
     bool isMaybeBeneficialRegion(unsigned I) const {
-      assert(I < Live.size() && "region index out of range");
-      return Live[I] && !isBeneficialRegion(I);
+      assert(I < CandReg.Live.size() && "region index out of range");
+      return CandReg.Live[I] && !isBeneficialRegion(I);
     }
 
     /// Updates internal structures following a MI rematerialization. Part of
@@ -540,6 +531,15 @@ private:
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
     void print(const DenseMap<MachineInstr *, unsigned> &MIRegion) const;
 #endif
+
+    static Register isDependency(const MachineOperand &MO);
+  };
+
+  struct RematDecision {
+    SmallVector<std::pair<RematReg *, BitVector>> Remats;
+
+    RematDecision(RematReg *Root,
+                  const DenseMap<MachineInstr *, unsigned> &MIRegion);
   };
 
   /// A scored rematerializable register. Higher scores indicate more beneficial
@@ -624,6 +624,8 @@ private:
 
   /// List of rematerializable registers.
   SmallVector<RematReg, 16> RematRegs;
+  /// Chain roots.
+  BitVector ChainRoots;
 
   using RollbackReg = std::pair<SmallVector<MachineInstr *>, const RematReg *>;
   /// List of rematerializations to rollback if rematerialization does not end
@@ -649,11 +651,16 @@ private:
   /// but are actually not, and returns whether there were any such regions.
   bool updateAndVerifyRPTargets(const BitVector &Regions);
 
+  bool addIfRematerializable(unsigned DefRegion, MachineInstr &DefMI,
+                             ArrayRef<uint64_t> RegionFreq);
+
   /// Collects all rematerializable registers and appends them to \ref
   /// RematRegs. \p RegionFreq contains the frequency of each region, 0
   /// indicating an unknown frequency. Returns whether any rematerializable
   /// register was found.
   bool collectRematRegs(ArrayRef<uint64_t> RegionFreq);
+
+  RematReg *evaluateCandidate(const CandidateReg &&CandReg);
 
   /// Rematerializes \p Remat. This removes the rematerialized register from
   /// live-in/out lists in the DAG and updates RP targets in all affected
@@ -674,12 +681,6 @@ private:
   /// rematerializations and resets live-ins/RP in all regions impacted by the
   /// stage to their pre-stage values.
   void finalizeGCNSchedStage() override;
-
-  /// \p Returns true if all the uses in \p InstToRemat defined at \p
-  /// OriginalIdx are live at \p RematIdx. This only checks liveness of virtual
-  /// reg uses.
-  bool allUsesAvailableAt(const MachineInstr *InstToRemat,
-                          SlotIndex OriginalIdx, SlotIndex RematIdx) const;
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   void printTargetRegions(bool PrintAll = false) const;
