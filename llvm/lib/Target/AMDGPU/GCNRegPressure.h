@@ -138,15 +138,16 @@ struct GCNRegPressure {
 
   void dump() const;
 
+  
+  static unsigned getRegKind(const TargetRegisterClass *RC,
+                             const SIRegisterInfo *STI);
+
 private:
   static constexpr unsigned ValueArraySize = TOTAL_KINDS * 2;
 
   /// Pressure for all register kinds (first all regular registers kinds, then
   /// all tuple register kinds).
   unsigned Value[ValueArraySize];
-
-  static unsigned getRegKind(const TargetRegisterClass *RC,
-                             const SIRegisterInfo *STI);
 
   friend GCNRegPressure max(const GCNRegPressure &P1,
                             const GCNRegPressure &P2);
@@ -183,6 +184,27 @@ inline GCNRegPressure operator-(const GCNRegPressure &P1,
 /// savings against that target from a starting \ref GCNRegPressure.
 class GCNRPTarget {
 public:
+
+  struct RPDiff {
+    int Value[GCNRegPressure::RegKind::TOTAL_KINDS];
+
+    RPDiff() {
+      std::fill(&Value[0], &Value[GCNRegPressure::RegKind::TOTAL_KINDS], 0);
+    } 
+
+    void inc(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI);
+    
+    void dec(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI); 
+    
+    bool hasNoIncrease() const {
+      for (unsigned I = 0 ; I < GCNRegPressure::RegKind::TOTAL_KINDS ; ++I) {
+        if (Value[I] > 0)
+          return false;
+      }
+      return true;
+    }
+  };
+
   /// Sets up the target such that the register pressure starting at \p RP does
   /// not show register spilling on function \p MF (w.r.t. the function's
   /// mininum target occupancy).
@@ -211,9 +233,18 @@ public:
   /// towards achieving the RP target.
   bool isSaveBeneficial(Register Reg) const;
 
+  /// Determines whether adding virtual register \p Reg will push pressure above
+  /// the desired RP target.
+  bool isAddDetrimental(Register Reg, LaneBitmask Mask) const;
+
   /// Saves virtual register \p Reg with lanemask \p Mask.
   void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
     RP.inc(Reg, Mask, LaneBitmask::getNone(), MRI);
+  }
+
+  /// Adds virtual register \p Reg with lanemask \p Mask.
+  void addReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
+    RP.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
   }
 
   /// Whether the current RP is at or below the defined pressure target.

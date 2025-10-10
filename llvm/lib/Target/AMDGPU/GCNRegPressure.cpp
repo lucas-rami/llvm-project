@@ -368,6 +368,24 @@ static LaneBitmask findUseBetween(unsigned Reg, LaneBitmask LastUseMask,
 ////////////////////////////////////////////////////////////////////////////////
 // GCNRPTarget
 
+void GCNRPTarget::RPDiff::inc(Register Reg, LaneBitmask Mask,
+                              const MachineRegisterInfo &MRI) {
+  unsigned NumRegs = SIRegisterInfo::getNumCoveredRegs(Mask);
+  const TargetRegisterClass *RC = MRI.getRegClass(Reg);
+  const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
+  const SIRegisterInfo *STI = static_cast<const SIRegisterInfo *>(TRI);
+  Value[GCNRegPressure::getRegKind(RC, STI)] += NumRegs;
+}
+
+void GCNRPTarget::RPDiff::dec(Register Reg, LaneBitmask Mask,
+                              const MachineRegisterInfo &MRI) {
+  unsigned NumRegs = SIRegisterInfo::getNumCoveredRegs(Mask);
+  const TargetRegisterClass *RC = MRI.getRegClass(Reg);
+  const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
+  const SIRegisterInfo *STI = static_cast<const SIRegisterInfo *>(TRI);
+  Value[GCNRegPressure::getRegKind(RC, STI)] -= NumRegs;
+}
+
 GCNRPTarget::GCNRPTarget(const MachineFunction &MF, const GCNRegPressure &RP)
     : GCNRPTarget(RP, MF) {
   const Function &F = MF.getFunction();
@@ -420,6 +438,25 @@ bool GCNRPTarget::isSaveBeneficial(Register Reg) const {
     return true;
   // For unified RFs, combined VGPR usage limit must be respected as well.
   return UnifiedRF && RP.getVGPRNum(true) > MaxUnifiedVGPRs;
+}
+
+bool GCNRPTarget::isAddDetrimental(Register Reg, LaneBitmask Mask) const {
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+  const TargetRegisterClass *RC = MRI.getRegClass(Reg);
+  const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
+  const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
+  unsigned NumRegs = SIRegisterInfo::getNumCoveredRegs(Mask);
+
+  if (SRI->isSGPRClass(RC))
+    return RP.getSGPRNum() + NumRegs > MaxSGPRs;
+  unsigned NumVGPRs =
+      SRI->isAGPRClass(RC) ? RP.getAGPRNum() : RP.getArchVGPRNum();
+  NumVGPRs += NumRegs;
+  // The addressable limit must always be respected.
+  if (NumVGPRs > MaxVGPRs)
+    return true;
+  // For unified RFs, combined VGPR usage limit must be respected as well.
+  return UnifiedRF && RP.getVGPRNum(true) + NumRegs > MaxUnifiedVGPRs;
 }
 
 bool GCNRPTarget::satisfied() const {
