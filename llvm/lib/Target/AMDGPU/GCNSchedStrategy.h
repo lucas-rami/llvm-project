@@ -442,8 +442,7 @@ public:
 ///    non-ignorable physical register use.
 /// 3  The register has no virtual register use whose live range would be
 ///    extended by the rematerialization.
-/// 4. The register has a single non-debug user in a different region from its
-///    defining region.
+/// 4. The register has no non-debug user in its defining region.
 /// 5. The register is not used by or using another register that is going to be
 ///    rematerialized.
 class PreRARematStage : public GCNSchedStage {
@@ -452,18 +451,30 @@ private:
   struct RematReg {
     /// Single MI defining the rematerializable register.
     MachineInstr *DefMI;
-    /// Single user of the rematerializable register.
-    MachineInstr *UseMI;
     /// Regions in which the register is live-in/live-out/live anywhere.
     BitVector LiveIn, LiveOut, Live;
+
+    /// A list of uses in a particular region.
+    struct RegionUses {
+      /// List of users. The first user in the list is always the earliest one
+      /// in the region. Other users are in arbitrary order.
+      SmallVector<MachineInstr *, 4> Users;
+
+      RegionUses(MachineInstr *User) : Users({User}) {}
+
+      void addUser(MachineInstr *NewUser, const LiveIntervals &LIS);
+    };
+    using RematUses = SmallDenseMap<unsigned, RegionUses, 2>;
+    /// All uses of the rematerializable register, grouped per region.
+    RematUses Uses;
+
     /// The rematerializable register's lane bitmask.
     LaneBitmask Mask;
-    /// Defining and using regions.
-    unsigned DefRegion, UseRegion;
+    /// Defining region.
+    unsigned DefRegion;
 
-    RematReg(MachineInstr *DefMI, MachineInstr *UseMI,
-             GCNScheduleDAGMILive &DAG,
-             const DenseMap<MachineInstr *, unsigned> &MIRegion);
+    RematReg(MachineInstr *DefMI, unsigned DefRegion, RematUses &&Uses,
+             GCNScheduleDAGMILive &DAG);
 
     /// Returns the rematerializable register. Do not call after deleting the
     /// original defining instruction.
@@ -478,7 +489,7 @@ private:
     /// I. This guarantees that rematerializing it will reduce RP in the region.
     bool isUnusedLiveThrough(unsigned I) const {
       assert(I < Live.size() && "region index out of range");
-      return LiveIn[I] && LiveOut[I] && I != UseRegion;
+      return LiveIn[I] && LiveOut[I] && !Uses.contains(I);
     }
 
     /// Updates internal structures following a MI rematerialization. Part of
@@ -506,8 +517,12 @@ private:
       SmallVector<uint64_t> Regions;
       /// Maximum observed frequency, normalized to minimum observed frequency.
       uint64_t MaxFreq = 0;
+      /// Sum of region frequencies normalized to minimum observed frequency,
+      /// assuming the maximum observed freqency for regions with unknown
+      /// frequency.
+      uint64_t TotalFreq = 0;
       /// Rescaling factor for scoring frequency differences in the range [0, 2
-      /// * (MaxFreq - 1)].
+      /// * (TotalFreq - 1)].
       uint64_t RescaleFactor = 0;
       /// Whether the rescaling factor should be used as a denominator (when the
       /// maximum frequency is "big") or as a nominator (when the maximum
@@ -604,10 +619,14 @@ private:
   struct RollbackInfo {
     /// The rematerializable register under consideration.
     const RematReg *Remat;
-    /// The rematerialized MI replacing the original defining MI.
-    MachineInstr *RematMI;
+    /// List of rematerializations, one per using region.
+    SmallVector<std::pair<unsigned, MachineInstr *>, 2> RegionRemats;
 
     RollbackInfo(const RematReg *Remat) : Remat(Remat) {}
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+    void print() const;
+#endif
   };
 
   /// Parent MBB to each region, in region order.
