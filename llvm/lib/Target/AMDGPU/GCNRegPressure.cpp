@@ -422,6 +422,43 @@ bool GCNRPTarget::isSaveBeneficial(Register Reg) const {
   return UnifiedRF && RP.getVGPRNum(true) > MaxUnifiedVGPRs;
 }
 
+bool GCNRPTarget::isSaveBeneficial(const RPDiff &Diff) const {
+  if (int NumExtraSGPRs = Diff.getSGPRNum() ; NumExtraSGPRs < 0)
+    return RP.getSGPRNum() > MaxSGPRs;
+  if (int NumExtraArchVGPRs = Diff.getArchVGPRNum() ; NumExtraArchVGPRs < 0)
+    return RP.getArchVGPRNum() > MaxVGPRs;
+  if (int NumExtraAGPRs = Diff.getAGPRNum() ; NumExtraAGPRs < 0) 
+    return RP.getAGPRNum() > MaxVGPRs;
+  if (UnifiedRF) {
+    if (int NumVGPRs = Diff.getVGPRNum(true) ; NumVGPRs < 0)
+      return RP.getVGPRNum(true) > MaxUnifiedVGPRs;
+  }
+  return false;
+}
+
+
+bool GCNRPTarget::wouldViolateTarget(const RPDiff &Diff) const {
+  if (int NumExtraSGPRs = Diff.getSGPRNum() ; NumExtraSGPRs > 0) {
+    if (NumExtraSGPRs + RP.getSGPRNum() > MaxSGPRs)
+      return true;
+  }
+  if (int NumExtraArchVGPRs = Diff.getArchVGPRNum() ; NumExtraArchVGPRs > 0) {
+    if (NumExtraArchVGPRs + RP.getArchVGPRNum() > MaxVGPRs)
+      return true;
+  }
+  if (int NumExtraAGPRs = Diff.getAGPRNum() ; NumExtraAGPRs > 0) {
+    if (NumExtraAGPRs + RP.getAGPRNum() > MaxVGPRs)
+      return true;
+  }
+  if (!UnifiedRF)
+    return false;
+  if (int NumVGPRs = Diff.getVGPRNum(true) ; NumVGPRs > 0) {
+    if (NumVGPRs + RP.getVGPRNum(true) > MaxUnifiedVGPRs)
+      return true;
+  }
+  return false;
+}
+
 bool GCNRPTarget::satisfied() const {
   if (RP.getSGPRNum() > MaxSGPRs || RP.getVGPRNum(false) > MaxVGPRs)
     return false;

@@ -35,6 +35,15 @@ struct GCNRegPressure {
     clear();
   }
 
+  GCNRegPressure(unsigned NumSGPRs, unsigned NumArchVGPRs, unsigned NumAGPRs,
+                 unsigned NumAVGPRs) {
+    Value[SGPR] = NumSGPRs;
+    Value[VGPR] = NumArchVGPRs;
+    Value[AGPR] = NumAGPRs;
+    Value[AVGPR] = NumAVGPRs;
+    std::fill(&Value[TOTAL_KINDS], &Value[TOTAL_KINDS], 0);
+  }
+
   bool empty() const {
     return !Value[SGPR] && !Value[VGPR] && !Value[AGPR] && !Value[AVGPR];
   }
@@ -145,14 +154,13 @@ private:
   /// all tuple register kinds).
   unsigned Value[ValueArraySize];
 
-  static unsigned getRegKind(const TargetRegisterClass *RC,
-                             const SIRegisterInfo *STI);
-
   friend GCNRegPressure max(const GCNRegPressure &P1,
                             const GCNRegPressure &P2);
 
   friend Printable print(const GCNRegPressure &RP, const GCNSubtarget *ST,
                          unsigned DynamicVGPRBlockSize);
+
+  unsigned getRegKind(const TargetRegisterClass *RC, const SIRegisterInfo *STI);
 };
 
 inline GCNRegPressure max(const GCNRegPressure &P1, const GCNRegPressure &P2) {
@@ -183,6 +191,51 @@ inline GCNRegPressure operator-(const GCNRegPressure &P1,
 /// savings against that target from a starting \ref GCNRegPressure.
 class GCNRPTarget {
 public:
+
+  struct RPDiff {
+    GCNRegPressure Pos, Neg;
+
+    void inc(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
+      Pos.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
+    }
+
+    void dec(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
+      Neg.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
+    }
+
+    int getSGPRNum() const { return Pos.getSGPRNum() - Neg.getSGPRNum(); }
+    int getVGPRNum(bool UnifiedVGPRFile) const {
+      return Pos.getVGPRNum(UnifiedVGPRFile) - Neg.getVGPRNum(UnifiedVGPRFile);
+    }
+    int getArchVGPRNum() const {
+      return Pos.getArchVGPRNum() - Neg.getArchVGPRNum();
+    }
+    int getAGPRNum() const { return Pos.getAGPRNum() - Neg.getAGPRNum(); }
+    int getAVGPRNum() const { return Pos.getAVGPRNum() - Neg.getAVGPRNum(); }
+
+    bool hasRPIncrease() const {
+      return getSGPRNum() > 0 || getArchVGPRNum() > 0 || getAGPRNum() > 0 ||
+             getAVGPRNum() > 0;
+    }
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+    friend raw_ostream &operator<<(raw_ostream &OS, const RPDiff &Diff) {
+      auto GetNum = [](int NumRegs, StringRef RegKind) -> std::string {
+        if (!NumRegs)
+          return "";
+        std::string Sign = (NumRegs > 0 ? "+" : "");
+        return Sign + std::to_string(NumRegs) + " " + RegKind.str() + " ";
+      };
+
+      OS << GetNum(Diff.getSGPRNum(), "SGPRs")
+         << GetNum(Diff.getArchVGPRNum(), "ArchVGPRs")
+         << GetNum(Diff.getAGPRNum(), "AGPRs")
+         << GetNum(Diff.getAVGPRNum(), "AVGPRs");
+      return OS;
+    }
+#endif
+  };
+
   /// Sets up the target such that the register pressure starting at \p RP does
   /// not show register spilling on function \p MF (w.r.t. the function's
   /// mininum target occupancy).
@@ -210,11 +263,28 @@ public:
   /// Determines whether saving virtual register \p Reg will be beneficial
   /// towards achieving the RP target.
   bool isSaveBeneficial(Register Reg) const;
+  
+  /// TODO
+  bool isSaveBeneficial(const RPDiff &Diff) const;
 
   /// Saves virtual register \p Reg with lanemask \p Mask.
   void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
     RP.inc(Reg, Mask, LaneBitmask::getNone(), MRI);
   }
+
+  /// Adds virtual register \p Reg with lanemask \p Mask.
+  void addReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
+    RP.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
+  }
+  
+  void addDiff(const RPDiff &Diff) {
+    RP += Diff.Pos;
+    RP -= Diff.Pos;
+  }
+
+  /// Determines whether adding virtual register \p Reg will push pressure above
+  /// the desired RP target.
+  bool wouldViolateTarget(const RPDiff &Diff) const;
 
   /// Whether the current RP is at or below the defined pressure target.
   bool satisfied() const;

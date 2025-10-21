@@ -559,6 +559,7 @@ define amdgpu_kernel void @test_mfma_loop_non_splat(ptr addrspace(1) %arg) #0 {
 ;
 ; GFX90A-LABEL: test_mfma_loop_non_splat:
 ; GFX90A:       ; %bb.0: ; %entry
+; GFX90A-NEXT:    v_mov_b32_e32 v0, 1.0
 ; GFX90A-NEXT:    v_accvgpr_write_b32 a1, 1.0
 ; GFX90A-NEXT:    v_accvgpr_write_b32 a31, 0
 ; GFX90A-NEXT:    v_accvgpr_write_b32 a30, 0
@@ -592,7 +593,6 @@ define amdgpu_kernel void @test_mfma_loop_non_splat(ptr addrspace(1) %arg) #0 {
 ; GFX90A-NEXT:    v_accvgpr_write_b32 a2, 0
 ; GFX90A-NEXT:    v_accvgpr_write_b32 a0, 0
 ; GFX90A-NEXT:    s_mov_b32 s0, 16
-; GFX90A-NEXT:    v_mov_b32_e32 v0, 1.0
 ; GFX90A-NEXT:    v_mov_b32_e32 v1, 2.0
 ; GFX90A-NEXT:  .LBB2_1: ; %for.cond.preheader
 ; GFX90A-NEXT:    ; =>This Inner Loop Header: Depth=1
@@ -618,6 +618,7 @@ define amdgpu_kernel void @test_mfma_loop_non_splat(ptr addrspace(1) %arg) #0 {
 ;
 ; GFX942-LABEL: test_mfma_loop_non_splat:
 ; GFX942:       ; %bb.0: ; %entry
+; GFX942-NEXT:    v_mov_b32_e32 v0, 1.0
 ; GFX942-NEXT:    v_accvgpr_write_b32 a1, 1.0
 ; GFX942-NEXT:    v_accvgpr_write_b32 a31, 0
 ; GFX942-NEXT:    v_accvgpr_write_b32 a30, 0
@@ -651,7 +652,6 @@ define amdgpu_kernel void @test_mfma_loop_non_splat(ptr addrspace(1) %arg) #0 {
 ; GFX942-NEXT:    v_accvgpr_write_b32 a2, 0
 ; GFX942-NEXT:    v_accvgpr_write_b32 a0, 0
 ; GFX942-NEXT:    s_mov_b32 s0, 16
-; GFX942-NEXT:    v_mov_b32_e32 v0, 1.0
 ; GFX942-NEXT:    v_mov_b32_e32 v1, 2.0
 ; GFX942-NEXT:  .LBB2_1: ; %for.cond.preheader
 ; GFX942-NEXT:    ; =>This Inner Loop Header: Depth=1
@@ -2871,6 +2871,7 @@ define <32 x float> @test_mfma_loop_non_splat_ret_use() #0 {
 ; GFX90A-LABEL: test_mfma_loop_non_splat_ret_use:
 ; GFX90A:       ; %bb.0: ; %entry
 ; GFX90A-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX90A-NEXT:    v_mov_b32_e32 v0, 1.0
 ; GFX90A-NEXT:    v_accvgpr_write_b32 a1, 1.0
 ; GFX90A-NEXT:    v_accvgpr_write_b32 a31, 0
 ; GFX90A-NEXT:    v_accvgpr_write_b32 a30, 0
@@ -2904,7 +2905,6 @@ define <32 x float> @test_mfma_loop_non_splat_ret_use() #0 {
 ; GFX90A-NEXT:    v_accvgpr_write_b32 a2, 0
 ; GFX90A-NEXT:    v_accvgpr_write_b32 a0, 0
 ; GFX90A-NEXT:    s_mov_b32 s4, 16
-; GFX90A-NEXT:    v_mov_b32_e32 v0, 1.0
 ; GFX90A-NEXT:    v_mov_b32_e32 v1, 2.0
 ; GFX90A-NEXT:  .LBB11_1: ; %for.cond.preheader
 ; GFX90A-NEXT:    ; =>This Inner Loop Header: Depth=1
@@ -2952,6 +2952,7 @@ define <32 x float> @test_mfma_loop_non_splat_ret_use() #0 {
 ; GFX942-LABEL: test_mfma_loop_non_splat_ret_use:
 ; GFX942:       ; %bb.0: ; %entry
 ; GFX942-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+; GFX942-NEXT:    v_mov_b32_e32 v0, 1.0
 ; GFX942-NEXT:    v_accvgpr_write_b32 a1, 1.0
 ; GFX942-NEXT:    v_accvgpr_write_b32 a31, 0
 ; GFX942-NEXT:    v_accvgpr_write_b32 a30, 0
@@ -2985,7 +2986,6 @@ define <32 x float> @test_mfma_loop_non_splat_ret_use() #0 {
 ; GFX942-NEXT:    v_accvgpr_write_b32 a2, 0
 ; GFX942-NEXT:    v_accvgpr_write_b32 a0, 0
 ; GFX942-NEXT:    s_mov_b32 s0, 16
-; GFX942-NEXT:    v_mov_b32_e32 v0, 1.0
 ; GFX942-NEXT:    v_mov_b32_e32 v1, 2.0
 ; GFX942-NEXT:  .LBB11_1: ; %for.cond.preheader
 ; GFX942-NEXT:    ; =>This Inner Loop Header: Depth=1
