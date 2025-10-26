@@ -471,28 +471,13 @@ public:
 /// be identified and kept up-to-date using a union-find data-structure.
 class PreRARematStage : public GCNSchedStage {
 private:
-  struct LiveRematReg {
+  /// Complementary liveness/RP related information to a rematerializable register.
+  struct RegLiveness {
     /// Regions in which the register is live-in/live-out/live anywhere.
     BitVector LiveIn, LiveOut, Live;
-    /// The rematerializable register's lane bitmask.
-    LaneBitmask Mask;
 
-    LiveRematReg(const RematDAG::RematReg &RematReg, GCNScheduleDAGMILive &DAG);
-  };
-
-  /// Determines if the register is both unused and live-through in region \p
-  /// I. This guarantees that rematerializing it will reduce RP in the region.
-  bool isUnusedLiveThrough(unsigned RegIdx, unsigned RegionIdx) const {
-    assert(RegIdx < RematRegs.size() && "register index out of range");
-    assert(RegionIdx < DAG.Regions.size() && "region index out of range");
-    const LiveRematReg &LRR = RematRegs[RegIdx];
-    return LRR.LiveIn[RegionIdx] && LRR.LiveOut[RegionIdx] &&
-           !RDAG.getReg(RegIdx).Uses.contains(RegionIdx);
-  }
-
-  struct LiveRematChain {
     /// Regions in which at least one register in the chain is live.
-    BitVector Live;
+    BitVector ChainLive;
     /// Predicted RP difference per impacted region induced by rematerializing
     /// the chain. Impacted regions are exactly the same as the bits set in \ref
     /// Live.
@@ -505,22 +490,37 @@ private:
     /// on RP.
     BitVector Penalized;
 
-    LiveRematChain(const RematDAG::RematChain &RematChain,
-                   const PreRARematStage &Stage);
+    RegLiveness(const RematDAG::RematReg &Reg, PreRARematStage &Stage);
 
-    /// Determines whether this rematerialization may be beneficial in at least
-    /// one target region.
+    /// Determines whether rematerializing this chain may push RP above targets
+    /// (or push it further from targets) in any of the regions in \p
+    /// PenalizedRegions.
+    bool maybeDetrimental(const BitVector &PenalizedRegions,
+                          ArrayRef<GCNRPTarget> RPTargets) const;
+
+    /// Determines whether rematerializing this chain may help reducing RP from
+    /// above to below targets in any of the regions in \p TargetRegions.
     bool maybeBeneficial(const BitVector &TargetRegions,
-                         ArrayRef<GCNRPTarget> RPTargets,
-                         const BitVector &PenalizedRegions) const;
+                         ArrayRef<GCNRPTarget> RPTargets) const;
   };
+
+  /// Determines if rematerializable register \p RegIdx is both unused and
+  /// live-through in region \p I. This guarantees that rematerializing it will
+  /// reduce RP in the region.
+  bool isUnusedLiveThrough(unsigned RegIdx, unsigned RegionIdx) const {
+    assert(RegIdx < RematRegs.size() && "register index out of range");
+    assert(RegionIdx < DAG.Regions.size() && "region index out of range");
+    const RegLiveness &LiveReg = RematRegs[RegIdx];
+    return LiveReg.LiveIn[RegionIdx] && LiveReg.LiveOut[RegionIdx] &&
+           !RDAG.getReg(RegIdx).Uses.contains(RegionIdx);
+  }
 
   /// A scored rematerialization candidate. Higher scores indicate more
   /// beneficial rematerializations. A null score indicate the rematerialization
   /// is not helpful to reduce RP in target regions.
   struct ScoredRemat {
     /// The chain under consideration.
-    unsigned ChainIdx;
+    unsigned RegIdx;
 
     /// Execution frequency information required by scoring heuristics.
     struct FreqInfo {
@@ -561,7 +561,7 @@ private:
       if (RegionImpact != O.RegionImpact)
         return RegionImpact < O.RegionImpact;
       // Break ties using chain index.
-      return ChainIdx > O.ChainIdx;
+      return RegIdx > O.RegIdx;
     }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
@@ -591,22 +591,6 @@ private:
     int64_t getFreqDiff(const FreqInfo &Freq, const RematDAG &RDAG) const;
   };
 
-  /// A rematerialization decision, and enough information to roll it back.
-  struct RematDecision {
-    /// The rematerialization chain under consideration.
-    const unsigned ChainIdx;
-    /// Maps each register index part of a rematerialization decision to its
-    /// rematerializations, themselves mapped from their containing region.
-    DenseMap<unsigned, DenseMap<unsigned, Register>> NewRegs;
-
-    /// Creates new virtual registers needed to rematerialize the chain.
-    RematDecision(unsigned ChainIdx, MachineRegisterInfo &MRI,
-                  const RematDAG &RDAG);
-  };
-
-  /// Parent MBB to each region, in region order.
-  SmallVector<MachineBasicBlock *> RegionBB;
-
   /// The target occupancy the set is trying to achieve. Empty when the
   /// objective is spilling reduction.
   std::optional<unsigned> TargetOcc;
@@ -616,13 +600,11 @@ private:
 
   /// Rematerialization DAG.
   RematDAG RDAG;
-  /// List of rematerializable registers.
-  SmallVector<LiveRematReg, 4> RematRegs;
-  /// List of rematerializable registers.
-  SmallVector<LiveRematChain, 4> RematChains;
-  /// List of rematerializations to rollback if rematerialization does not end
-  /// up being beneficial.
-  SmallVector<RematDecision> Rollbacks;
+  /// Liveness information for rematerializable registers, in the same order as in \ref RDAG.
+  SmallVector<RegLiveness, 4> RematRegs;
+  /// List of rematerializable chains to rollback if rematerialization does not
+  /// end up being beneficial.
+  SmallVector<unsigned> Rollbacks;
   /// After successful stage initialization, indicates which regions should be
   /// rescheduled.
   BitVector RescheduleRegions;
@@ -646,15 +628,13 @@ private:
                                 SmallVectorImpl<GCNRPTarget> &RPTargets,
                                 const BitVector &RegionsToCheck);
 
-  /// Rematerializes \p Chain and removes all rematerialized registers part of
-  /// the chain from live-in/out lists in the DAG. Fills \p Rollback with
-  /// required information to be able to rollback the rematerialization
-  /// post-rescheduling.
-  void rematerialize(const RematDecision &Remat) const;
+  /// Rematerializes chain \p ChainIdx, updating the DAG's liveness information
+  /// to reflect added/deleted registers.
+  void rematerialize(unsigned ChainIdx);
 
-  /// Rolls back the rematerialization decision represented by \p Rollback and
-  /// live-in/out lists in the DAG.
-  void rollback(const RematDecision &Remat) const;
+  /// Rolls back the rematerialization of chain \p ChainIdx, updating the DAG's
+  /// liveness information to reflect added/deleted registers.
+  void rollback(unsigned ChainIdx);
 
   /// If remat alone did not increase occupancy to the target one, rolls back
   /// all rematerializations and resets live-ins/RP in all regions impacted by
@@ -670,10 +650,9 @@ public:
 
   PreRARematStage(GCNSchedStageID StageID, GCNScheduleDAGMILive &DAG)
       : GCNSchedStage(StageID, DAG),
-        RDAG(DAG.Regions, DAG.MRI, *DAG.TRI, *DAG.TII, *DAG.LIS),
-        RescheduleRegions(DAG.Regions.size()) {
-    RegionBB.reserve(DAG.Regions.size());
-  }
+        RDAG(DAG.Regions, /*RegionsTopDown=*/DAG.doMBBSchedRegionsTopDown(),
+             DAG.MRI, *DAG.LIS, MF, *DAG.TRI, *DAG.TII),
+        RescheduleRegions(DAG.Regions.size()) {}
 };
 
 class ILPInitialScheduleStage : public GCNSchedStage {

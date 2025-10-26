@@ -422,7 +422,7 @@ bool GCNRPTarget::isSaveBeneficial(Register Reg) const {
   return UnifiedRF && RP.getVGPRNum(true) > MaxUnifiedVGPRs;
 }
 
-bool GCNRPTarget::isSaveBeneficial(const RPDiff &Diff) const {
+bool GCNRPTarget::isDiffBeneficial(const RPDiff &Diff) const {
   if (int NumExtraSGPRs = Diff.getSGPRNum() ; NumExtraSGPRs < 0)
     return RP.getSGPRNum() > MaxSGPRs;
   if (int NumExtraArchVGPRs = Diff.getArchVGPRNum() ; NumExtraArchVGPRs < 0)

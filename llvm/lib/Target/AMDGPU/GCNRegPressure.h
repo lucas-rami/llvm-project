@@ -191,7 +191,6 @@ inline GCNRegPressure operator-(const GCNRegPressure &P1,
 /// savings against that target from a starting \ref GCNRegPressure.
 class GCNRPTarget {
 public:
-
   struct RPDiff {
     GCNRegPressure Pos, Neg;
 
@@ -220,11 +219,16 @@ public:
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
     friend raw_ostream &operator<<(raw_ostream &OS, const RPDiff &Diff) {
-      auto GetNum = [](int NumRegs, StringRef RegKind) -> std::string {
+      bool FirstPrint = true;
+      auto GetNum = [&](int NumRegs, StringRef RegKind) -> std::string {
         if (!NumRegs)
           return "";
         std::string Sign = (NumRegs > 0 ? "+" : "");
-        return Sign + std::to_string(NumRegs) + " " + RegKind.str() + " ";
+        if (FirstPrint)
+          FirstPrint = false;
+        else
+          Sign = " / " + Sign;
+        return Sign + std::to_string(NumRegs) + " " + RegKind.str();
       };
 
       OS << GetNum(Diff.getSGPRNum(), "SGPRs")
@@ -263,9 +267,10 @@ public:
   /// Determines whether saving virtual register \p Reg will be beneficial
   /// towards achieving the RP target.
   bool isSaveBeneficial(Register Reg) const;
-  
-  /// TODO
-  bool isSaveBeneficial(const RPDiff &Diff) const;
+
+  /// Determines whether applying \p Diff to the current RP will be beneficial
+  /// towards achieving the RP target for at least one register kind.
+  bool isDiffBeneficial(const RPDiff &Diff) const;
 
   /// Saves virtual register \p Reg with lanemask \p Mask.
   void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
@@ -277,9 +282,10 @@ public:
     RP.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
   }
   
-  void addDiff(const RPDiff &Diff) {
+  /// Applies \p Diff to the current RP.
+  void applyDiff(const RPDiff &Diff) {
     RP += Diff.Pos;
-    RP -= Diff.Pos;
+    RP -= Diff.Neg;
   }
 
   /// Determines whether adding virtual register \p Reg will push pressure above
