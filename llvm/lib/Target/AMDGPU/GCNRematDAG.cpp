@@ -15,6 +15,7 @@
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/Register.h"
 
@@ -64,70 +65,56 @@ static Register getPotentialRematReg(const MachineInstr &MI) {
   return MI.getOperand(0).getReg();
 }
 
-bool RematDAG::build() {
-  clear();
-  if (Regions.empty())
-    return false;
-
-  // Maps each basic block number to regions that are part of the BB.
-  DenseMap<unsigned, SmallVector<unsigned, 4>> RegionsPerBlock;
-
-  const unsigned NumRegions = Regions.size();
-  for (unsigned I = 0; I < NumRegions; ++I) {
-    RegionBoundaries Region = Regions[I];
-    for (auto MI = Region.first; MI != Region.second; ++MI)
-      MIRegion.insert({&*MI, I});
-    MachineBasicBlock *MBB = Region.first->getParent();
-    if (Region.second != MBB->end())
-      MIRegion.insert({&*Region.second, I});
-    RegionBB.push_back(MBB);
-    RegionsPerBlock[MBB->getNumber()].push_back(I);
-  }
-
-  // Visit regions in dominator tree pre-order to ensure that regions defining
-  // registers come before regions using them.
-  MachineDominatorTree MDT(MF);
-  for (MachineDomTreeNode *MBB : depth_first(&MDT)) {
-    ArrayRef<unsigned> MBBRegions =
-        RegionsPerBlock.at(MBB->getBlock()->getNumber());
-    auto MBBRegionsIt = RegionsTopDown ? MBBRegions : reverse(MBBRegions);
-    for (unsigned I : MBBRegionsIt)
-      collectRematRegs(I);
-  }
-
-  return !Regs.empty();
-}
-
 void RematDAG::rematerialize(unsigned RegIdx) {
   // Start by rematerializing all registers in the chain. The register iteration
   // order is an order that honors all dependencies between registers inside the
   // chain.
-  // TODO: this will no longer be true once we start adding new registers to the
-  // list as we rematerialize.
+  // TODO: the above will no longer be true once we start adding new registers
+  // to the list as we rematerialize.
   const RematReg &Reg = getReg(RegIdx);
   for (unsigned ChainRegIdx : Reg.chain()) {
-    const RematDAG::RematReg &Reg = getReg(ChainRegIdx);
-    assert(Reg.DefMI && "register already fully rematerialized");
-    Register DefReg = Reg.getDefReg();
+    const RematReg &ChainReg = getReg(ChainRegIdx);
+    assert(ChainReg.DefMI && "register already fully rematerialized");
+    Register DefReg = ChainReg.getDefReg();
     auto NewRegsIt = RematerializedRegs.try_emplace(ChainRegIdx);
     DenseMap<unsigned, Register> &MyNewRegs = NewRegsIt.first->getSecond();
 
-    // Rematerialize the register in every region where it is used.
-    for (const auto &[UseRegion, RegionUses] : Reg.Uses) {
-      if (UseRegion == Reg.DefRegion)
-        continue;
+    // Rematerialize the register in every region where it is needed by the
+    // chain.
+    const BitVector &RematRegions = ChainReg.getRegRematRegions(ChainRegIdx);
+    for (unsigned UseRegion : RematRegions.set_bits()) {
       Register NewReg = MRI.cloneVirtualRegister(DefReg);
       MyNewRegs.insert({UseRegion, NewReg});
 
-      MachineBasicBlock::iterator IP = RegionUses.InsertPos;
-      TII.reMaterialize(*IP->getParent(), IP, NewReg, 0, *Reg.DefMI, TRI);
-      MachineInstr &RematMI = *std::prev(IP);
+      // The register must be available at or before the latest possible insert
+      // position for each register in the chain which has the register in its
+      // own chain and users in the region (including this register itself).
+      MachineBasicBlock::iterator InsertPos =
+          std::prev(Regions[UseRegion].second);
+      for (unsigned PosRegIdx : ChainReg.chain()) {
+        const RematReg &PosReg = getReg(PosRegIdx);
+        if (ChainRegIdx >= PosReg.Chain.size() || !PosReg.Chain[ChainRegIdx])
+          continue;
+        auto RegRegUses = PosReg.Uses.find(UseRegion);
+        if (RegRegUses != ChainReg.Uses.end()) {
+          // Check the register's latest possible insert position in the region.
+          MachineBasicBlock::iterator RegPos =
+              *RegRegUses->getSecond().InsertPos;
+          if (LIS.getInstructionIndex(*RegPos) <
+              LIS.getInstructionIndex(*InsertPos))
+            InsertPos = RegPos;
+        }
+      }
+
+      TII.reMaterialize(*InsertPos->getParent(), InsertPos, NewReg, 0,
+                        *ChainReg.DefMI, TRI);
+      MachineInstr &RematMI = *std::prev(InsertPos);
 
       // The new instruction needs to use new registers previously
       // rematerialized as part of the chain. This expects these have already
       // been rematerialized and will assert if not.
-      for (const RematDAG::RematReg::Dependency &Dep : Reg.Dependencies) {
-        Register OldDepReg = Reg.DefMI->getOperand(Dep.MOIdx).getReg();
+      for (const RematDAG::RematReg::Dependency &Dep : ChainReg.Dependencies) {
+        Register OldDepReg = ChainReg.DefMI->getOperand(Dep.MOIdx).getReg();
         Register NewDepReg = RematerializedRegs.at(Dep.RegIdx).at(UseRegion);
         RematMI.substituteRegister(OldDepReg, NewDepReg, 0, TRI);
       }
@@ -135,8 +122,11 @@ void RematDAG::rematerialize(unsigned RegIdx) {
 
       // Users of the rematerialized register in the region need to use the
       // new register.
-      for (MachineInstr *UserMI : RegionUses.Users)
-        UserMI->substituteRegister(DefReg, NewReg, 0, TRI);
+      auto ChainRegUses = ChainReg.Uses.find(UseRegion);
+      if (ChainRegUses != ChainReg.Uses.end()) {
+        for (MachineInstr *UserMI : ChainRegUses->getSecond().Users)
+          UserMI->substituteRegister(DefReg, NewReg, 0, TRI);
+      }
     }
   }
 
@@ -148,7 +138,7 @@ void RematDAG::rematerialize(unsigned RegIdx) {
     RematReg &Reg = Regs[RegIdx];
     Register DefReg = Reg.getDefReg();
     LIS.removeInterval(DefReg);
-    if (!Reg.PartialRemat[RegIdx]) {
+    if (!Reg.PartialRemats[RegIdx]) {
       deleteMI(Reg.DefRegion, Reg.DefMI);
       // Setting the DefMI to nullptr signifies that the register was deleted.
       Reg.DefMI = nullptr;
@@ -173,7 +163,7 @@ void RematDAG::rollback(unsigned RegIdx) {
     // register.
     Register DefReg;
     if (!Reg.DefMI) {
-      assert(!Reg.PartialRemat[RegIdx] && "reg should be dead");
+      assert(!Reg.PartialRemats[RegIdx] && "reg should be dead");
       // Recreate the original MI from one of the rematerializations.
       Register ModelReg = MyRematRegs.begin()->second;
       MachineInstr *ModelMI = MRI.getOneDef(ModelReg)->getParent();
@@ -216,7 +206,7 @@ void RematDAG::rollback(unsigned RegIdx) {
     Register DefReg = getReg(RegIdx).getDefReg();
     // If the register already existed; remove its existing interval before
     // recomputing it.
-    if (Reg.PartialRemat[RegIdx])
+    if (Reg.PartialRemats[RegIdx])
       LIS.removeInterval(DefReg);
     LIS.createAndComputeVirtRegInterval(DefReg);
     RematerializedRegs.erase(RegIdx);
@@ -313,6 +303,66 @@ bool RematDAG::isMOAvailableAtUses(
   return true;
 }
 
+bool RematDAG::build() {
+  clear();
+  if (Regions.empty())
+    return false;
+
+  // Maps each basic block number to regions that are part of the BB.
+  DenseMap<unsigned, SmallVector<unsigned, 4>> RegionsPerBlock;
+
+  const unsigned NumRegions = Regions.size();
+  for (unsigned I = 0; I < NumRegions; ++I) {
+    RegionBoundaries Region = Regions[I];
+    for (auto MI = Region.first; MI != Region.second; ++MI)
+      MIRegion.insert({&*MI, I});
+    MachineBasicBlock *MBB = Region.first->getParent();
+    if (Region.second != MBB->end())
+      MIRegion.insert({&*Region.second, I});
+    RegionBB.push_back(MBB);
+    RegionsPerBlock[MBB->getNumber()].push_back(I);
+  }
+
+  // Visit regions in dominator tree pre-order to ensure that regions defining
+  // registers come before regions using them.
+  MachineDominatorTree MDT(MF);
+  for (MachineDomTreeNode *MBB : depth_first(&MDT)) {
+    ArrayRef<unsigned> MBBRegions =
+        RegionsPerBlock.at(MBB->getBlock()->getNumber());
+    auto MBBRegionsIt = RegionsTopDown ? MBBRegions : reverse(MBBRegions);
+    for (unsigned I : MBBRegionsIt)
+      collectRematRegs(I);
+  }
+
+  return !Regs.empty();
+}
+
+void RematDAG::setRegDependency(unsigned RegIdx, unsigned DepRegIdx) {
+  // The dependency's dependencies are transitively part of the chain.
+  RematReg &Reg = Regs[RegIdx];
+  RematReg &DepReg = Regs[DepRegIdx];
+  Reg.Chain |= DepReg.Chain;
+
+  // Notify all registers added to the chain that they are now a part of it, and
+  // add regions in which each of these registers will need to be
+  // rematerialized.
+  const BitVector& RootRegionUses = Reg.RematRegions[RegIdx];
+  for (unsigned ChainRegIdx : DepReg.chain()) {
+    resizeBitVectorAndSet(Regs[ChainRegIdx].OtherChains, RegIdx);
+
+    BitVector &DepRematRegions = Reg.RematRegions[ChainRegIdx];
+    DepRematRegions |= DepReg.RematRegions[ChainRegIdx];
+    DepRematRegions |= RootRegionUses;
+    LLVM_DEBUG({
+      dbgs() << "Added remat regions for (" << RegIdx << "/" << ChainRegIdx
+             << "): is now ";
+      for (unsigned I : DepRematRegions.set_bits())
+        dbgs() << I << ' ';
+      dbgs() << '\n';
+    });
+  }
+}
+
 void RematDAG::collectRematRegs(unsigned DefRegion) {
   // Collect partially rematerializable registers in instruction order within
   // each region. This guarantees that, within a single region, partially
@@ -320,6 +370,7 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
   // rematerializable registers are visited first. This is important to
   // guarantee that all of a register's dependencies are visited before the
   // register itself.
+  LLVM_DEBUG(dbgs() << "Collecting registers in " << DefRegion << '\n');
   RegionBoundaries Bounds = Regions[DefRegion];
   for (auto MI = Bounds.first; MI != Bounds.second; ++MI) {
     // The instruction must be rematerializable.
@@ -342,10 +393,13 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
     unsigned SubIdx = DefMI.getOperand(0).getSubReg();
     Reg.Mask = SubIdx ? TRI.getSubRegIndexLaneMask(SubIdx)
                       : MRI.getMaxLaneMaskForVReg(DefReg);
+    BitVector &RematRegions = Reg.RematRegions[RegIdx];
+    RematRegions.resize(Regions.size());
+
+    LLVM_DEBUG(dbgs() << "Candidate register (" << RegIdx << "): " << DefMI);
 
     // Collect the candidate's direct users, both rematerializable and
     // unrematerializable.
-    BitVector RegUseRegions(Regions.size());
     for (MachineInstr &UseMI : MRI.use_nodbg_instructions(DefReg)) {
       auto UseRegion = MIRegion.find(&UseMI);
       if (UseRegion == MIRegion.end()) {
@@ -361,12 +415,13 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
         if (auto It = Reg.Uses.find(UseRegion->second); It != Reg.Uses.end()) {
           It->getSecond().addUser(&UseMI, LIS);
         } else {
-          RegUseRegions.set(UseRegion->second);
+          RematRegions.set(UseRegion->second);
           Reg.Uses.try_emplace(UseRegion->second, &UseMI, LIS);
         }
       }
     }
-    if (Reg.Uses.empty()) {
+    if (Reg.Uses.empty() && Reg.DefRegionUsers.empty()) {
+      LLVM_DEBUG(dbgs() << "  -> Eliminated (no non-debug users)\n");
       Regs.pop_back();
       continue;
     }
@@ -404,6 +459,8 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
       } else if (!Available) {
         // The dependency is both unavailable at uses and unrematerializable, so
         // the register can never be even partially rematerializable.
+        LLVM_DEBUG(dbgs() << "  -> Eliminated (operand #" << MOIdx
+                          << " unrematable and unavaialble)\n");
         Regs.pop_back();
         break;
       }
@@ -414,13 +471,15 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
     // Now we know the register is at least partially rematerializable.
     RegToIdx.insert({DefReg, RegIdx});
 
-    // Dependencies available at all of their parent's uses do not need to be
-    // part of the chain. Otherwise, dependencies need to be rematerialized
-    // along with the register. Transitively, all the registers that need to be
-    // rematerialized with the dependencies also need to be rematerialized.
+    // Dependencies available at all of their parent's uses are not part of the
+    // chain. Unavailable dependencies need to be rematerialized along with the
+    // register.
     for (unsigned I : UnavailableDeps)
       setRegDependency(RegIdx, Reg.Dependencies[I].RegIdx);
   }
+
+  // FIXME: may be able to merge the two loops below i.e. iterate only once over
+  // all registers again.
 
   // Mark register which cannot ever be fully rematerialized. These are
   // registers which have at least one unreamaterializable user in their region.
@@ -457,8 +516,8 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
   // FIXME: Can probably make this more efficient by caching intermediate
   // results along the way.
   for (unsigned RootIdx = 0, E = getNumRegs(); RootIdx < E; ++RootIdx) {
-    const RematReg &RootReg = getReg(RootIdx);
-    BitVector PartialRemats(RootReg.Chain);
+    RematReg &RootReg = Regs[RootIdx];
+    RootReg.PartialRemats.resize(RootReg.Chain.size());
 
     BitVector Visited(RootReg.Chain.size());
     std::function<void(unsigned)> CheckPartialRemat = [&](unsigned RegIdx) {
@@ -486,7 +545,7 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
         }
         if (!Visited[UserIdx])
           CheckPartialRemat(UserIdx);
-        if (PartialRemats[UserIdx]) {
+        if (RootReg.PartialRemats[UserIdx]) {
           // The user is in the chain but is partially rematerializable; the
           // original user will remain and so should the register.
           return;
@@ -494,32 +553,11 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
       }
 
       // The register is fully rematerializable as part of this chain.
-      PartialRemats.reset(RegIdx);
+      RootReg.PartialRemats.reset(RegIdx);
     };
 
     for (unsigned ChainRegIdx : RootReg.Chain.set_bits())
       CheckPartialRemat(ChainRegIdx);
-  }
-}
-
-void RematDAG::setRegDependency(unsigned RegIdx, unsigned DepRegIdx) {
-  // The dependent register is in the chain.
-  // The dependency's dependencies are transitively part of the chain.
-  RematReg &Reg = Regs[RegIdx];
-  RematReg &DepReg = Regs[DepRegIdx];
-  Reg.Chain |= DepReg.Chain;
-
-  // Notify all registers added to the chain that they are now a part of it, and
-  // add regions in which each of these registers will need to be
-  // rematerialized.
-  for (unsigned ChainRegIdx : DepReg.chain()) {
-    resizeBitVectorAndSet(Regs[ChainRegIdx].OtherChains, RegIdx);
-
-    BitVector &DepRematRegions = Reg.RematRegions[ChainRegIdx];
-    DepRematRegions.resize(Regions.size());
-    DepRematRegions |= DepReg.RematRegions[ChainRegIdx];
-    for (const auto &[UseRegion, _] : Reg.Uses)
-      DepRematRegions.set(UseRegion);
   }
 }
 

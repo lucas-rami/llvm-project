@@ -471,7 +471,8 @@ public:
 /// be identified and kept up-to-date using a union-find data-structure.
 class PreRARematStage : public GCNSchedStage {
 private:
-  /// Complementary liveness/RP related information to a rematerializable register.
+  /// Complementary liveness/RP related information to a rematerializable
+  /// register.
   struct RegLiveness {
     /// Regions in which the register is live-in/live-out/live anywhere.
     BitVector LiveIn, LiveOut, Live;
@@ -492,6 +493,9 @@ private:
 
     RegLiveness(const RematDAG::RematReg &Reg, PreRARematStage &Stage);
 
+    void computeChainInfo(unsigned RootIdx, PreRARematStage &Stage);
+
+  
     /// Determines whether rematerializing this chain may push RP above targets
     /// (or push it further from targets) in any of the regions in \p
     /// PenalizedRegions.
@@ -600,7 +604,8 @@ private:
 
   /// Rematerialization DAG.
   RematDAG RDAG;
-  /// Liveness information for rematerializable registers, in the same order as in \ref RDAG.
+  /// Liveness information for rematerializable registers, in the same order as
+  /// in \ref RDAG.
   SmallVector<RegLiveness, 4> RematRegs;
   /// List of rematerializable chains to rollback if rematerialization does not
   /// end up being beneficial.

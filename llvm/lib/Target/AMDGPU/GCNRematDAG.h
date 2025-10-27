@@ -60,20 +60,11 @@ public:
       /// The latest position at which this register can be inserted into the
       /// region to be available for its uses.
       MachineBasicBlock::iterator InsertPos;
-      /// Latest index at which the register should be alive in the region to be
-      /// available for its uses.
-      SlotIndex LastAliveIdx;
       /// List of existing users in the region.
       SmallVector<MachineInstr *, 4> Users;
 
       RegionUses(MachineInstr *User, const LiveIntervals &LIS)
           : InsertPos(User), Users({User}) {
-        LastAliveIdx = LIS.getInstructionIndex(*User);
-      }
-
-      RegionUses(const RegionUses &ParentUses, const LiveIntervals &LIS)
-          : InsertPos(ParentUses.InsertPos) {
-        LastAliveIdx = LIS.getInstructionIndex(*InsertPos);
       }
 
       void addUser(MachineInstr *NewUser, const LiveIntervals &LIS) {
@@ -115,9 +106,9 @@ public:
     /// Bits correspond to register indices that correspond to the subset of
     /// registers part of the chain that will only be partially rematerialized
     /// as a result of rematerialing this register.
-    BitVector PartialRemat;
+    BitVector PartialRemats;
 
-    BitVector getRegRematRegions(unsigned RegIdx) const {
+    const BitVector& getRegRematRegions(unsigned RegIdx) const {
       return RematRegions.at(RegIdx);
     }
 
@@ -203,6 +194,8 @@ private:
 
   void collectRematRegs(unsigned I);
 
+  void setRegDependency(unsigned RegIdx, unsigned DepRegIdx);
+
   void insertMI(unsigned RegionIdx, MachineInstr *RematMI) {
     RegionBoundaries &Bounds = Regions[RegionIdx];
     if (Bounds.first == std::next(MachineBasicBlock::iterator(RematMI)))
@@ -211,15 +204,13 @@ private:
   }
 
   void deleteMI(unsigned RegionIdx, MachineInstr *MI) {
-    // It's not possible for the deleted instruction to be the upper region
+    // It is not possible for the deleted instruction to be the upper region
     // boundary since we don't rematerialize region terminators.
     if (Regions[RegionIdx].first == MI)
       Regions[RegionIdx].first = std::next(MachineBasicBlock::iterator(MI));
     LIS.RemoveMachineInstrFromMaps(*MI);
     MI->eraseFromParent();
   }
-
-  void setRegDependency(unsigned RegIdx, unsigned DepRegIdx);
 
   void clear();
 
