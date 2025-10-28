@@ -480,8 +480,8 @@ private:
     /// Regions in which at least one register in the chain is live.
     BitVector ChainLive;
     /// Predicted RP difference per impacted region induced by rematerializing
-    /// the chain. Impacted regions are exactly the same as the bits set in \ref
-    /// Live.
+    /// the register. Impacted regions are exactly the same as the bits set in
+    /// \ref Live.
     DenseMap<unsigned, GCNRPTarget::RPDiff> RPDiffs;
     /// Subset of \ref Live regions in which the computed RP difference is
     /// approximate.
@@ -491,11 +491,10 @@ private:
     /// on RP.
     BitVector Penalized;
 
-    RegLiveness(const RematDAG::RematReg &Reg, PreRARematStage &Stage);
+    RegLiveness(unsigned RegIdx, PreRARematStage &Stage);
 
-    void computeChainInfo(unsigned RootIdx, PreRARematStage &Stage);
+    // void computeChainInfo(unsigned RootIdx, PreRARematStage &Stage);
 
-  
     /// Determines whether rematerializing this chain may push RP above targets
     /// (or push it further from targets) in any of the regions in \p
     /// PenalizedRegions.
@@ -519,11 +518,53 @@ private:
            !RDAG.getReg(RegIdx).Uses.contains(RegionIdx);
   }
 
+  /// The goal of a group is to cluster together rematerializable registers so
+  /// htta we are able to somewhat accurately and predictably track RP changes
+  /// induces by rematerialization of a group of registers.
+  ///
+  /// Things to remember:
+  /// (1) When we rematerialize a register with the DAG, it is no longer a
+  /// live-in/live-out in any region. Instead every copy (and the original reg
+  /// in the case of a partial rematerialization) is local to a single region.
+  /// We can track that nicely.
+  // struct RematGroup {
+  //   BitVector Group;
+
+  //   /// Regions in which at least one register in the chain is live.
+  //   BitVector Live;
+  //   /// Predicted RP difference per impacted region induced by rematerializing
+  //   /// the chain. Impacted regions are exactly the same as the bits set in \ref
+  //   /// Live.
+  //   DenseMap<unsigned, GCNRPTarget::RPDiff> RPDiffs;
+  //   /// Subset of \ref Live regions in which the computed RP difference is
+  //   /// approximate.
+  //   BitVector ApproximateDiff;
+  //   /// Subset of \ref Live regions and \ref ApproximateDiff in which the
+  //   /// overall effect of rematerializing the chain can have a negative effect
+  //   /// on RP.
+  //   BitVector Penalized;
+
+  //   RematGroup(unsigned RootIdx, PreRARematStage &Stage);
+
+  //   void computeChainInfo(unsigned RootIdx, PreRARematStage &Stage);
+
+  //   /// Determines whether rematerializing this chain may push RP above targets
+  //   /// (or push it further from targets) in any of the regions in \p
+  //   /// PenalizedRegions.
+  //   bool maybeDetrimental(const BitVector &PenalizedRegions,
+  //                         ArrayRef<GCNRPTarget> RPTargets) const;
+
+  //   /// Determines whether rematerializing this chain may help reducing RP from
+  //   /// above to below targets in any of the regions in \p TargetRegions.
+  //   bool maybeBeneficial(const BitVector &TargetRegions,
+  //                        ArrayRef<GCNRPTarget> RPTargets) const;
+  // };
+
   /// A scored rematerialization candidate. Higher scores indicate more
   /// beneficial rematerializations. A null score indicate the rematerialization
   /// is not helpful to reduce RP in target regions.
   struct ScoredRemat {
-    /// The chain under consideration.
+    /// The register under consideration.
     unsigned RegIdx;
 
     /// Execution frequency information required by scoring heuristics.
@@ -573,7 +614,8 @@ private:
 #endif
 
   private:
-    SmallVector<unsigned, 4> NumRegsPerReg;
+    // SmallVector<unsigned, 4> NumRegsPerReg;
+    unsigned NumRegs;
 
     // The three members below are the scoring components, top to bottom from
     // most important to least important when comparing candidates.
@@ -589,10 +631,6 @@ private:
     /// Expected number of target regions impacted by the rematerialization,
     /// scaled by the size of the register being rematerialized.
     unsigned RegionImpact;
-
-    unsigned getNumRegs(const GCNScheduleDAGMILive &DAG) const;
-
-    int64_t getFreqDiff(const FreqInfo &Freq, const RematDAG &RDAG) const;
   };
 
   /// The target occupancy the set is trying to achieve. Empty when the
@@ -635,11 +673,11 @@ private:
 
   /// Rematerializes chain \p ChainIdx, updating the DAG's liveness information
   /// to reflect added/deleted registers.
-  void rematerialize(unsigned ChainIdx);
+  unsigned rematerialize(unsigned RegIdx);
 
   /// Rolls back the rematerialization of chain \p ChainIdx, updating the DAG's
   /// liveness information to reflect added/deleted registers.
-  void rollback(unsigned ChainIdx);
+  void rollback(unsigned RegIdx);
 
   /// If remat alone did not increase occupancy to the target one, rolls back
   /// all rematerializations and resets live-ins/RP in all regions impacted by

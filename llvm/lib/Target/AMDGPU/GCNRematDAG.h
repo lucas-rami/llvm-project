@@ -11,10 +11,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/LiveIntervals.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
+#include <iterator>
 
 namespace llvm {
 
@@ -23,119 +26,212 @@ namespace llvm {
 using RegionBoundaries =
     std::pair<MachineBasicBlock::iterator, MachineBasicBlock::iterator>;
 
+class RematDAG;
+
+/// A rematerializable register.
+///
+/// A rematerializable register has a list of dependencies, which correspond
+/// to the unique read register operands of its defining instruction.
+/// Dependencies can themselves be rematerializable, in which case they are
+/// stored in the \ref Dependencies vector. Unrematerializable dependencies
+/// are not represented explicitly, and corresponding read registers are
+/// considered to be both live and have the same value at all of the defined
+/// register's uses (otherwise the register cannot be rematerialized, see
+/// below).
+///
+/// A register is partially rematerializable (i.e., rematerializable to all
+/// its non-defining using regions *but not* deletable from its defining
+/// region) if and only if all of its dependencies are either (1) available at
+/// all its direct uses or (2) partially rematerializable along with it as
+/// well. A register is fully rematerializable (i.e., rematerializable to all
+/// its non-defining using regions *and* deletable from its defining region)
+/// if and only if it is (1) partially rematerializable and (2) has no
+/// non-rematerializable use in its defining region. Importantly, only partial
+/// rematerializability can be determined from the register alone. Full
+/// rematerializability can in the general case only be determined when
+/// looking at the register through the lens of a chain.
+struct RematReg {
+  /// Single MI defining the rematerializable register. Set to nullptr after full rematerialization.
+  MachineInstr *DefMI;
+  /// Region of \p DefRegion.
+  unsigned DefRegion;
+  /// The rematerializable register's lane bitmask.
+  LaneBitmask Mask;
+
+  /// Represents uses in a particular region.
+  struct RegionUses {
+    /// The latest position at which this register can be inserted into the
+    /// region to be available for its uses.
+    MachineBasicBlock::iterator InsertPos;
+    /// List of existing users in the region.
+    SmallDenseSet<MachineInstr *, 4> Users;
+
+    RegionUses(MachineInstr *User, const LiveIntervals &LIS)
+        : InsertPos(User), Users({User}) {}
+
+    void addUser(MachineInstr *NewUser, const LiveIntervals &LIS) {
+      Users.insert(NewUser);
+      if (Users.empty() || LIS.getInstructionIndex(*NewUser) <
+                               LIS.getInstructionIndex(*InsertPos))
+        InsertPos = *NewUser;
+    }
+
+    void eraseUser(MachineInstr *DeletedUser, const LiveIntervals &LIS) {
+      assert(Users.contains(DeletedUser));
+      Users.erase(DeletedUser);
+      SlotIndex IPSlot = LIS.getInstructionIndex(*InsertPos);
+      if (LIS.getInstructionIndex(*DeletedUser) == IPSlot) {
+        // Recompute earliest insert position when the deleted user was the
+        // earliest one.
+        if (!Users.empty()) {
+          auto UsersIt = Users.begin();
+          InsertPos = *UsersIt;
+          for (auto E = Users.end(); UsersIt != E; ++UsersIt)
+            if (LIS.getInstructionIndex(**UsersIt) <
+                LIS.getInstructionIndex(*InsertPos))
+              InsertPos = *UsersIt;
+        }
+      }
+    }
+  };
+  /// Uses of the register outside its region, mapped by region.
+  SmallDenseMap<unsigned, RegionUses, 2> Uses;
+  /// Users of the register inside its defining region.
+  SmallDenseSet<MachineInstr *, 4> DefRegionUsers;
+
+  /// Returns the rematerializable register from its defining instruction.
+  /// Illegal to call after rematerializing the register, but legal again
+  /// after rolling back the rematerialization.
+  inline Register getDefReg() const { return DefMI->getOperand(0).getReg(); }
+
+  /// A register read by \ref DefMI which the register depends on to determine
+  /// its value.
+  struct Dependency {
+    unsigned MOIdx;
+    bool Available;
+    unsigned RegIdx;
+
+    Dependency(unsigned MOIdx, bool Available, unsigned RegIdx)
+        : MOIdx(MOIdx), Available(Available), RegIdx(RegIdx) {}
+  };
+  /// This register's dependencies, one per unique rematerializable register
+  /// operand.
+  SmallVector<Dependency, 2> Dependencies;
+
+  /// Maps regions in which the register was rematerialized to the register
+  /// index that corresponds to this rematerialization.
+  DenseMap<unsigned, unsigned> Remats;
+
+  inline bool isRematable() const { return DefMI && !Uses.empty(); }
+
+  inline bool isFullyRematerializable() const {
+    return DefMI && DefRegionUsers.empty();
+  }
+
+  Printable print(bool SkipRegions = false) const;
+
+private:
+  void rematTo(RematReg &Remat, unsigned UseRegion,
+               MachineBasicBlock::iterator &InsertPos,
+               const LiveIntervals &LIS);
+
+  void addUser(MachineInstr *MI, unsigned Region, const LiveIntervals &LIS);
+
+  void eraseUser(MachineInstr *MI, unsigned Region, const LiveIntervals &LIS);
+
+  void addUsers(const SmallDenseSet<MachineInstr *, 4> &NewUsers,
+                unsigned Region, const LiveIntervals &LIS);
+
+  friend RematDAG;
+};
+
+class ChainIterator {
+  const ArrayRef<RematReg> Regs;
+
+  SmallDenseSet<unsigned, 4> Visited;
+  SmallVector<std::pair<unsigned, int>> Path;
+  unsigned RegIdx;
+
+  void advance() {
+    assert((Path.size() > 1 || Path.front().second != -1) &&
+           "trying to advance past end");
+    if (Path.back().second == -1)
+      Path.pop_back();
+    nextInPreOrder();
+  }
+
+  void nextInPreOrder() {
+    // Move "vertically" in the DAG to the deepest dependency that hasn't
+    // been visited yet.
+    while (true) {
+      RegIdx = Path.back().first;
+      int &DepIdx = Path.back().second;
+      const RematReg &Reg = Regs[RegIdx];
+      int NumDeps = Reg.Dependencies.size();
+      // Move "horizontally" in the DAG through the dependencies until we find
+      // one that is part of the chain and hasn't been visited yet.
+      for (; DepIdx < NumDeps; ++DepIdx) {
+        if (!Reg.Dependencies[DepIdx].Available &&
+            Visited.insert(DepIdx).second)
+          break;
+      }
+      if (DepIdx == NumDeps) {
+        DepIdx = -1;
+        return;
+      }
+      Path.push_back({DepIdx, 0});
+    }
+  }
+
+public:
+  using iterator_category = std::forward_iterator_tag;
+  using difference_type = std::ptrdiff_t;
+  using value_type = unsigned;
+  using pointer = const value_type *;
+  using reference = value_type;
+
+  ChainIterator(unsigned RootIdx, ArrayRef<RematReg> Regs)
+      : Regs(Regs), RegIdx(RootIdx) {
+    Path.push_back({RootIdx, 0});
+    nextInPreOrder();
+  }
+
+  ChainIterator(unsigned RootIdx) : Regs({}), RegIdx(RootIdx) {
+    Path.push_back({RootIdx, -1});
+  }
+
+  ChainIterator(const ChainIterator &) = default;
+
+  ChainIterator operator++(int) {
+    auto Prev = *this;
+    advance();
+    return Prev;
+  }
+
+  ChainIterator &operator++() {
+    advance();
+    return *this;
+  }
+
+  unsigned operator*() const { return RegIdx; }
+
+  bool operator==(const ChainIterator &Other) const {
+    if (RegIdx != Other.RegIdx || Path.size() != Other.Path.size())
+      return false;
+    for (const auto &[Node, OtherNode] : zip_equal(Path, Other.Path)) {
+      if (Node != OtherNode)
+        return false;
+    }
+    return true;
+  }
+
+  bool operator!=(const ChainIterator &Other) const {
+    return !(*this == Other);
+  }
+};
+
 class RematDAG {
 public:
-  /// A rematerializable register.
-  ///
-  /// A rematerializable register has a list of dependencies, which correspond
-  /// to the unique read register operands of its defining instruction.
-  /// Dependencies can themselves be rematerializable, in which case they are
-  /// stored in the \ref Dependencies vector. Unrematerializable dependencies
-  /// are not represented explicitly, and corresponding read registers are
-  /// considered to be both live and have the same value at all of the defined
-  /// register's uses (otherwise the register cannot be rematerialized, see
-  /// below).
-  ///
-  /// A register is partially rematerializable (i.e., rematerializable to all
-  /// its non-defining using regions *but not* deletable from its defining
-  /// region) if and only if all of its dependencies are either (1) available at
-  /// all its direct uses or (2) partially rematerializable along with it as
-  /// well. A register is fully rematerializable (i.e., rematerializable to all
-  /// its non-defining using regions *and* deletable from its defining region)
-  /// if and only if it is (1) partially rematerializable and (2) has no
-  /// non-rematerializable use in its defining region. Importantly, only partial
-  /// rematerializability can be determined from the register alone. Full
-  /// rematerializability can in the general case only be determined when
-  /// looking at the register through the lens of a chain.
-  struct RematReg {
-    /// Single MI defining the rematerializable register.
-    MachineInstr *DefMI;
-    /// Region of defining instruction.
-    unsigned DefRegion;
-    /// The rematerializable register's lane bitmask.
-    LaneBitmask Mask;
-
-    /// Represents uses in a particular region.
-    struct RegionUses {
-      /// The latest position at which this register can be inserted into the
-      /// region to be available for its uses.
-      MachineBasicBlock::iterator InsertPos;
-      /// List of existing users in the region.
-      SmallVector<MachineInstr *, 4> Users;
-
-      RegionUses(MachineInstr *User, const LiveIntervals &LIS)
-          : InsertPos(User), Users({User}) {
-      }
-
-      void addUser(MachineInstr *NewUser, const LiveIntervals &LIS) {
-        Users.push_back(NewUser);
-        if (LIS.getInstructionIndex(*NewUser) <
-            LIS.getInstructionIndex(*InsertPos))
-          InsertPos = *NewUser;
-      }
-    };
-    /// Uses of the register outside its region, mapped by region.
-    SmallDenseMap<unsigned, RegionUses, 2> Uses;
-    /// Users of the register inside its defining region.
-    SmallVector<MachineInstr *, 4> DefRegionUsers;
-
-    /// Returns the rematerializable register from its defining instruction.
-    /// Illegal to call after rematerializing the register, but legal again
-    /// after rolling back the rematerialization.
-    inline Register getDefReg() const { return DefMI->getOperand(0).getReg(); }
-
-    // ==== Chain-related information ====
-
-    /// A register read by \ref DefMI which the register depends on to determine
-    /// its value.
-    struct Dependency {
-      unsigned MOIdx;
-      unsigned RegIdx;
-
-      Dependency(unsigned MOIdx, unsigned RegIdx)
-          : MOIdx(MOIdx), RegIdx(RegIdx) {}
-    };
-    SmallVector<Dependency, 2> Dependencies;
-
-    /// Bits correspond to register indices of registers part of the chain
-    /// rooted at this register i.e., the minimal set of registers that are
-    /// required to be (partially) rematerialized along with this register. This
-    /// includes the index of the register itself.
-    BitVector Chain;
-
-    /// Bits correspond to register indices that correspond to the subset of
-    /// registers part of the chain that will only be partially rematerialized
-    /// as a result of rematerialing this register.
-    BitVector PartialRemats;
-
-    const BitVector& getRegRematRegions(unsigned RegIdx) const {
-      return RematRegions.at(RegIdx);
-    }
-
-    inline iterator_range<BitVector::const_set_bits_iterator> chain() const {
-      return Chain.set_bits();
-    }
-    inline unsigned chainSize() const { return Chain.count(); }
-
-    Printable print(bool SkipRegions = false) const;
-
-  private:
-    /// Whether it is impossible to fully rematerialize the register.
-    bool AlwaysPartialRemat = false;
-
-    /// Maps register indices part of the chain to the list of regions they will
-    /// be rematerialized in through this chain.
-    DenseMap<unsigned, BitVector> RematRegions;
-
-    /// Bits correspond to register indices of registers which are roots of
-    /// chains which this register is a part of. This does not include this
-    /// register's own index, since a register is always trivially part of the
-    /// chain rooted at itself.
-    BitVector OtherChains;
-
-    friend RematDAG;
-  };
-
   RematDAG(SmallVectorImpl<RegionBoundaries> &Regions, bool RegionsTopDown,
            MachineRegisterInfo &MRI, LiveIntervals &LIS, MachineFunction &MF,
            const TargetRegisterInfo &TRI, const TargetInstrInfo &TII)
@@ -148,13 +244,25 @@ public:
   inline const RematReg &getReg(unsigned Idx) const { return Regs[Idx]; };
   inline unsigned getNumRegs() const { return Regs.size(); };
 
-  /// For each register, determine which of the registers part of its chain
-  /// will only be partially be rematerialized as part of the chain.
-  BitVector getPartialRematsInChain(unsigned RegIdx) const;
+  inline unsigned getRegion(const MachineInstr *MI) const {
+    return MIRegion.at(MI);
+  }
 
-  void rematerialize(unsigned RegIdx);
+  ChainIterator chainBegin(unsigned RootIdx) const {
+    return ChainIterator(RootIdx, Regs);
+  }
+  ChainIterator chainEnd(unsigned RootIdx) const {
+    return ChainIterator(RootIdx);
+  }
+  iterator_range<ChainIterator> getChain(unsigned RootIdx) const {
+    return make_range(chainBegin(RootIdx), chainEnd(RootIdx));
+  }
 
-  void rollback(unsigned RegIdx);
+  unsigned rematerialize(unsigned RootIdx);
+
+  void rollback(unsigned RootIdx);
+
+  unsigned getRematRegIdx(const MachineInstr &MI) const;
 
   Printable print(unsigned RegIdx, bool RootOnly = true,
                   bool SkipRegions = false) const;
@@ -182,9 +290,31 @@ private:
   /// underlying \ref Regs vector.
   DenseMap<Register, unsigned> RegToIdx;
 
-  /// Maps each rematerialized register index to its rematerializations,
-  /// themselves mapped from their containing region.
-  DenseMap<unsigned, DenseMap<unsigned, Register>> RematerializedRegs;
+  DenseSet<unsigned> NewRegs;
+  DenseSet<unsigned> RecomputeLiveIntervals;
+
+  /// Doesn't create any new register, just moves MIs within RegIdx's defining
+  /// region.
+  bool moveEarlierInDefRegion(unsigned RegIdx,
+                              MachineBasicBlock::iterator InsertPos);
+
+  unsigned rematRegInRegion(unsigned RegIdx, unsigned UseRegion,
+                            MachineBasicBlock::iterator InsertPos);
+
+  void partiallyRollbackReg(unsigned RegIdx);
+
+  void rollbackReg(unsigned RegIdx);
+
+  void deleteRegIfUnused(unsigned RegIdx);
+
+  void collectRematRegs(unsigned DefRegion);
+
+  void substituteUserReg(MachineInstr &UserMI, unsigned FromIdx,
+                         unsigned ToIdx);
+
+  void substituteRegDependencies(unsigned FromIdx, unsigned ToIdx);
+
+  void updateLiveIntervals();
 
   /// Whether the MI is rematerializable
   bool isReMaterializable(const MachineInstr &MI) const;
@@ -192,15 +322,12 @@ private:
   bool isMOAvailableAtUses(const MachineOperand &MO,
                            SmallDenseMap<unsigned, SlotIndex, 4> Uses) const;
 
-  void collectRematRegs(unsigned I);
-
-  void setRegDependency(unsigned RegIdx, unsigned DepRegIdx);
-
-  void insertMI(unsigned RegionIdx, MachineInstr *RematMI) {
+  void insertMI(unsigned RegionIdx, MachineInstr *MI) {
     RegionBoundaries &Bounds = Regions[RegionIdx];
-    if (Bounds.first == std::next(MachineBasicBlock::iterator(RematMI)))
-      Bounds.first = RematMI;
-    LIS.InsertMachineInstrInMaps(*RematMI);
+    if (Bounds.first == std::next(MachineBasicBlock::iterator(MI)))
+      Bounds.first = MI;
+    LIS.InsertMachineInstrInMaps(*MI);
+    MIRegion.emplace_or_assign(MI, RegionIdx);
   }
 
   void deleteMI(unsigned RegionIdx, MachineInstr *MI) {
@@ -210,14 +337,8 @@ private:
       Regions[RegionIdx].first = std::next(MachineBasicBlock::iterator(MI));
     LIS.RemoveMachineInstrFromMaps(*MI);
     MI->eraseFromParent();
-  }
-
-  void clear();
-
-  static void resizeBitVectorAndSet(BitVector &BV, unsigned I) {
-    if (BV.size() < I + 1)
-      BV.resize(I + 1);
-    BV.set(I);
+    MIRegion.erase(MI);
   }
 };
+
 } // namespace llvm
