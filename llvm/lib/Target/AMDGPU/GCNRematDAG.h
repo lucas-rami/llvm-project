@@ -311,7 +311,7 @@ private:
   void substituteUserReg(MachineInstr &UserMI, unsigned FromIdx,
                          unsigned ToIdx);
 
-  void substituteRegDependencies(unsigned FromIdx, unsigned ToIdx);
+  void substituteRegDependencies(RematReg& FromReg, RematReg& ToReg);
 
   void updateLiveIntervals();
 

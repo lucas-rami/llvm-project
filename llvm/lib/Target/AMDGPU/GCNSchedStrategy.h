@@ -629,7 +629,7 @@ private:
   bool makeValidCandidate(unsigned RegIdx, const BitVector &TargetRegions,
                           ArrayRef<GCNRPTarget> RPTargets);
 
-  unsigned getNumRegs(const RematReg& Reg) const; 
+  unsigned getNumRegs(const RematReg &Reg) const;
 
   /// Rematerializes chain \p ChainIdx, updating the DAG's liveness information
   /// to reflect added/deleted registers.
@@ -644,6 +644,9 @@ private:
   /// the stage to their pre-stage values.
   void finalizeGCNSchedStage() override;
 
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+  Printable printReg(unsigned RegIdx) const;
+#endif
 
 public:
   bool initGCNSchedStage() override;

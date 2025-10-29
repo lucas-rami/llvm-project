@@ -219,7 +219,7 @@ public:
 
     RPDiff &operator+=(const RPDiff &RHS) {
       Pos += RHS.Pos;
-      Neg -= RHS.Neg;
+      Neg += RHS.Neg;
       return *this;
     }
 
