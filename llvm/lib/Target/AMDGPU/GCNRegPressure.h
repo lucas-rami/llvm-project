@@ -217,6 +217,13 @@ public:
              getAVGPRNum() > 0;
     }
 
+    RPDiff &operator+=(const RPDiff &RHS) {
+      Pos += RHS.Pos;
+      Neg -= RHS.Neg;
+      return *this;
+    }
+
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
     friend raw_ostream &operator<<(raw_ostream &OS, const RPDiff &Diff) {
       bool FirstPrint = true;

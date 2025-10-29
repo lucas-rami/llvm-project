@@ -19,7 +19,9 @@
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineDominators.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Register.h"
+#include "llvm/CodeGen/TargetRegisterInfo.h"
 
 #define DEBUG_TYPE "rdag"
 
@@ -48,9 +50,11 @@ static bool isAvailableAtUse(const VNInfo *OVNI, LaneBitmask Mask,
   return true;
 }
 
-bool RematDAG::isMOAvailableAtUses(
-    const MachineOperand &MO,
-    SmallDenseMap<unsigned, SlotIndex, 4> Uses) const {
+static bool isMOAvailableAtUses(const MachineOperand &MO,
+                                ArrayRef<SlotIndex> Uses,
+                                const TargetRegisterInfo &TRI,
+                                const MachineRegisterInfo &MRI,
+                                const LiveIntervals &LIS) {
   if (Uses.empty())
     return true;
   Register DepReg = MO.getReg();
@@ -60,8 +64,8 @@ bool RematDAG::isMOAvailableAtUses(
   const LiveInterval &DepLI = LIS.getInterval(DepReg);
   const VNInfo *DefVN = DepLI.getVNInfoAt(
       LIS.getInstructionIndex(*MO.getParent()).getRegSlot(true));
-  for (const auto &[_, UseIdx] : Uses) {
-    if (!isAvailableAtUse(DefVN, Mask, UseIdx, DepLI))
+  for (SlotIndex Use : Uses) {
+    if (!isAvailableAtUse(DefVN, Mask, Use, DepLI))
       return false;
   }
   return true;
@@ -77,6 +81,16 @@ static Register isRegDependency(const MachineOperand &MO) {
     return Register();
   }
   return Reg;
+}
+
+static SlotIndex getLastMISlot(const SmallDenseSet<MachineInstr *, 4> Instrs,
+                               const LiveIntervals &LIS) {
+  assert(!Instrs.empty());
+  auto InstrsIt = Instrs.begin(), InstrsEnd = Instrs.end();
+  SlotIndex LastSlot = LIS.getInstructionIndex(**InstrsIt);
+  while (++InstrsIt != InstrsEnd)
+    LastSlot = std::max(LastSlot, LIS.getInstructionIndex(**InstrsIt));
+  return LastSlot;
 }
 
 bool RematDAG::moveEarlierInDefRegion(unsigned RegIdx,
@@ -342,53 +356,54 @@ void RematDAG::updateLiveIntervals() {
 Printable RematReg::print(bool SkipRegions) const {
   return Printable([&, SkipRegions](raw_ostream &OS) {
     if (!SkipRegions) {
-      // Concatenate all region numbers in which the register is used.
-      std::string UsingRegions;
-      for (const auto &[UseRegion, _] : Uses) {
-        if (!UsingRegions.empty())
-          UsingRegions += ",";
-        UsingRegions += std::to_string(UseRegion);
+      OS << "[" << DefRegion;
+      if (!DefRegionUsers.empty())
+        OS << '*';
+      if (!Uses.empty()) {
+        auto It = Uses.begin();
+        OS << " -> " << It->first;
+        while (++It != Uses.end())
+          OS << "," << It->first;
       }
-      OS << "[" << DefRegion << " -> " << UsingRegions << "] ";
+      OS << "] ";
     }
     DefMI->print(OS, /*IsStandalone=*/true, /*SkipOpers=*/false,
                  /*SkipDebugLoc=*/false, /*AddNewLine=*/false);
   });
 }
 
-Printable RematDAG::print(unsigned RegIdx, bool RootOnly,
-                          bool SkipRegions) const {
-  if (RootOnly) {
-    return Printable([&, RegIdx](raw_ostream &OS) {
-      OS << "-> " << getReg(RegIdx).print(SkipRegions);
-    });
-  }
-  return Printable([&, RegIdx, SkipRegions](raw_ostream &OS) {
-    SmallMapVector<unsigned, unsigned, 4> RegDepths;
+Printable RematDAG::print(unsigned RootIdx, bool SkipRoot) const {
+  return Printable([&, RootIdx, SkipRoot](raw_ostream &OS) {
+    DenseMap<unsigned, unsigned> RegDepths;
     std::function<void(unsigned, unsigned)> WalkChain =
         [&](unsigned RegIdx, unsigned Depth) -> void {
-      auto *RegIt = RegDepths.find(RegIdx);
-      if (RegIt != RegDepths.end() && RegIt->second < Depth) {
-        std::pair<unsigned, unsigned> NewDepth(RegIdx, Depth);
-        RegIt->swap(NewDepth);
-      } else {
-        RegDepths.insert({RegIdx, Depth});
+      unsigned MaxDepth = std::max(RegDepths.lookup_or(RegIdx, Depth), Depth);
+      RegDepths.emplace_or_assign(RegIdx, MaxDepth);
+      for (const RematReg::Dependency &Dep : getReg(RegIdx).Dependencies) {
+        if (!Dep.Available)
+          WalkChain(Dep.RegIdx, Depth + 1);
       }
-      for (const RematReg::Dependency &Dep : getReg(RegIdx).Dependencies)
-        WalkChain(Dep.RegIdx, Depth + 1);
     };
-    WalkChain(RegIdx, 0);
+    WalkChain(RootIdx, 0);
 
     // Sort in decreasing depth order to print root at the bottom.
-    SmallVector<std::pair<unsigned, unsigned>> Regs(RegDepths.takeVector());
+    SmallVector<std::pair<unsigned, unsigned>> Regs(RegDepths.begin(),
+                                                    RegDepths.end());
     sort(Regs, [](const auto &LHS, const auto &RHS) {
       return LHS.second > RHS.second;
     });
 
+    OS << "Register (" << RootIdx << ") has " << Regs.size() << " dependencies";
+    if (SkipRoot)
+      OS << " (root skipped)";
+    OS << '\n';
     for (const auto &[RegIdx, Depth] : Regs) {
+      if (SkipRoot && !Depth)
+        continue;
       std::string Shift(2 * Depth, ' ');
       std::string Sep = Depth ? "| " : "-> ";
-      OS << Shift << Sep << getReg(RegIdx).print(SkipRegions) << '\n';
+      OS << Shift << Sep << '(' << RegIdx << ") "
+         << getReg(RegIdx).print(/*SkipRegions=*/Depth) << '\n';
     }
   });
 }
@@ -456,7 +471,8 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
   // rematerializable registers are visited first. This is important to
   // guarantee that all of a register's dependencies are visited before the
   // register itself.
-  LLVM_DEBUG(dbgs() << "Collecting registers in " << DefRegion << '\n');
+  LLVM_DEBUG(dbgs() << "Collecting candidates in region [" << DefRegion
+                    << "]\n");
   RegionBoundaries Bounds = Regions[DefRegion];
   for (auto MI = Bounds.first; MI != Bounds.second; ++MI) {
     // The instruction must be rematerializable.
@@ -479,7 +495,7 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
     Reg.Mask = SubIdx ? TRI.getSubRegIndexLaneMask(SubIdx)
                       : MRI.getMaxLaneMaskForVReg(DefReg);
 
-    LLVM_DEBUG(dbgs() << "Candidate register (" << RegIdx << "): " << DefMI);
+    LLVM_DEBUG(dbgs() << '(' << RegIdx << ") " << DefMI);
 
     // Collect the candidate's direct users, both rematerializable and
     // unrematerializable.
@@ -497,39 +513,21 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
     if (Reg.Uses.empty() && Reg.DefRegionUsers.empty()) {
       LLVM_DEBUG(
           dbgs()
-          << "  -> Eliminated (no non-debug users or lone terminator user)\n");
+          << "  -> Eliminated: no non-debug users or lone terminator user\n");
       Regs.pop_back();
       continue;
     }
 
     UnrematableDeps.emplace_back();
 
-    // Derive slots at which dependencies must be available. We map them from
-    // their containing region so that we can perform more efficient slot
-    // merging when creating chains.
-    SmallDenseMap<unsigned, SlotIndex, 4> UseSlots;
-    for (const auto &[UseRegion, RegionUses] : Reg.Uses) {
-      for (const MachineInstr *UseMI : RegionUses.Users) {
-        SlotIndex UseSlot = LIS.getInstructionIndex(*UseMI);
-        UseSlots.insert({UseRegion, UseSlot.getRegSlot(true)});
-      }
-    }
-
-    // All transitive unrematerializable dependencies in the chain must be
-    // available at all of the register's uses.
-    DenseSet<Register> UnrematRegCache;
-    auto CheckUnrematableDeps = [&](unsigned DepIdx) -> bool {
-      for (unsigned ChainRegIdx : getChain(DepIdx)) {
-        const RematReg &DepReg = Regs[ChainRegIdx];
-        for (unsigned MOIdx : UnrematableDeps[ChainRegIdx]) {
-          MachineOperand &MO = DepReg.DefMI->getOperand(MOIdx);
-          if (UnrematRegCache.insert(MO.getReg()).second &&
-              !isMOAvailableAtUses(MO, UseSlots))
-            return false;
-        }
-      }
-      return true;
-    };
+    // Derive slots at which dependencies must be available for this register to
+    // be at least partially rematerializable. This is the latest register user
+    // in each region with at least one register user.
+    SmallVector<SlotIndex, 4> UseSlots;
+    if (!Reg.DefRegionUsers.empty())
+      UseSlots.push_back(getLastMISlot(Reg.DefRegionUsers, LIS));
+    for (const auto &[_, RegionUses] : Reg.Uses)
+      UseSlots.push_back(getLastMISlot(RegionUses.Users, LIS));
 
     // Collect the candidate's dependencies. If the same register is used
     // multiple times we just need to store it once.
@@ -540,27 +538,73 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
         continue;
       AllDepRegs.insert(DepReg);
 
-      bool Available = isMOAvailableAtUses(MO, UseSlots);
+      bool Available = isMOAvailableAtUses(MO, UseSlots, TRI, MRI, LIS);
       auto DepIt = RegToIdx.find(DepReg);
       if (DepIt != RegToIdx.end()) {
         const unsigned DepRegIdx = DepIt->second;
         assert(DepRegIdx < RegIdx && "dependency should come first");
-        if (!CheckUnrematableDeps(DepRegIdx)) {
-          Regs.pop_back();
-          UnrematableDeps.pop_back();
-          break;
-        }
-        Reg.Dependencies.emplace_back(MOIdx, DepRegIdx, Available);
-      } else if (!Available) {
+        Reg.Dependencies.emplace_back(MOIdx, Available, DepRegIdx);
+        LLVM_DEBUG(
+            dbgs() << "| Dependency on " << (Available ? "**available** " : "")
+                   << "rematable register (" << DepRegIdx << '/'
+                   << printReg(DepReg, &TRI, MO.getSubReg(), &MRI) << ")\n");
+      } else if (Available) {
+        LLVM_DEBUG(dbgs() << "| Dependency on unrematable register "
+                          << printReg(DepReg, &TRI, MO.getSubReg(), &MRI)
+                          << '\n');
+        UnrematableDeps.back().insert(MOIdx);
+      } else {
         // The dependency is both unavailable at uses and unrematerializable, so
         // the register can never be even partially rematerializable.
-        LLVM_DEBUG(dbgs() << "  -> Eliminated (operand #" << MOIdx
-                          << " unrematable and unavaialble)\n");
+        LLVM_DEBUG(dbgs() << "  -> Eliminated: operand #" << MOIdx << " ("
+                          << printReg(DepReg, &TRI, MO.getSubReg(), &MRI)
+                          << ") unrematable and unavaialble\n");
         Regs.pop_back();
         UnrematableDeps.pop_back();
         break;
-      } else {
-        UnrematableDeps.back().insert(MOIdx);
+      }
+    }
+    if (RegIdx == Regs.size())
+      continue;
+
+    // All transitive unrematerializable dependencies in the chain must be
+    // available at all of the register's uses.
+    DenseSet<unsigned> VisitedDependencies;
+    DenseSet<Register> UnrematRegCache;
+    std::function<bool(unsigned)> CheckUnrematableDeps =
+        [&](unsigned DepIdx) -> bool {
+      if (!VisitedDependencies.insert(RegIdx).second)
+        return true;
+
+      // Retrieve direct unrematerializable dependencies for this dependency.
+      // All of them must be available at the current candidate's uses.
+      const RematReg &DepReg = Regs[DepIdx];
+      for (unsigned MOIdx : UnrematableDeps[DepIdx]) {
+        MachineOperand &MO = DepReg.DefMI->getOperand(MOIdx);
+        if (UnrematRegCache.insert(MO.getReg()).second &&
+            !isMOAvailableAtUses(MO, UseSlots, TRI, MRI, LIS)) {
+          LLVM_DEBUG(dbgs() << "  -> Eliminated: dependency (" << DepIdx
+                            << ") has operand register #" << MOIdx << " ("
+                            << printReg(MO.getReg(), &TRI, MO.getSubReg(), &MRI)
+                            << ") which is unrematable and unavailable at "
+                               "candidate's uses\n");
+          return false;
+        }
+      }
+
+      // Recurse on the dependencies' own dependencies.
+      for (const RematReg::Dependency &DepDep : DepReg.Dependencies) {
+        if (!DepDep.Available && !CheckUnrematableDeps(DepDep.RegIdx))
+          return false;
+      }
+      return true;
+    };
+
+    for (const RematReg::Dependency &Dep : Reg.Dependencies) {
+      if (!Dep.Available && !CheckUnrematableDeps(Dep.RegIdx)) {
+        Regs.pop_back();
+        UnrematableDeps.pop_back();
+        break;
       }
     }
     if (RegIdx == Regs.size())
@@ -568,6 +612,8 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
 
     // Now we know the register is at least partially rematerializable.
     RegToIdx.insert({DefReg, RegIdx});
+
+    LLVM_DEBUG(dbgs() << "  -> Valid! " << print(RegIdx, /*SkipRoot=*/true));
   }
 }
 
@@ -581,7 +627,6 @@ unsigned RematDAG::getRematRegIdx(const MachineInstr &MI) const {
     return getNumRegs();
   return UserRegIt->second;
 }
-
 
 void RematReg::rematTo(RematReg &Remat, unsigned UseRegion,
                        MachineBasicBlock::iterator &InsertPos,

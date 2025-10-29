@@ -477,8 +477,6 @@ private:
     /// Regions in which the register is live-in/live-out/live anywhere.
     BitVector LiveIn, LiveOut, Live;
 
-    /// Regions in which at least one register in the chain is live.
-    BitVector ChainLive;
     /// Predicted RP difference per impacted region induced by rematerializing
     /// the register. Impacted regions are exactly the same as the bits set in
     /// \ref Live.
@@ -490,80 +488,40 @@ private:
     /// overall effect of rematerializing the chain can have a negative effect
     /// on RP.
     BitVector Penalized;
+    unsigned NumRegs;
+
+    enum { INVALID, VALID_WITH_PARENT, VALID, REMATERIALIZED } Status = INVALID;
 
     RegLiveness(unsigned RegIdx, PreRARematStage &Stage);
 
-    // void computeChainInfo(unsigned RootIdx, PreRARematStage &Stage);
+    void makeValidCandidate(const RematReg &Reg);
 
-    /// Determines whether rematerializing this chain may push RP above targets
-    /// (or push it further from targets) in any of the regions in \p
+    /// Determines whether rematerializing this chain may push RP above \p
+    /// RPTargets (or push it further from targets) in any of the regions in \p
     /// PenalizedRegions.
     bool maybeDetrimental(const BitVector &PenalizedRegions,
                           ArrayRef<GCNRPTarget> RPTargets) const;
 
     /// Determines whether rematerializing this chain may help reducing RP from
-    /// above to below targets in any of the regions in \p TargetRegions.
+    /// above to below \p RPTargets in any of the regions in \p TargetRegions.
     bool maybeBeneficial(const BitVector &TargetRegions,
                          ArrayRef<GCNRPTarget> RPTargets) const;
+
+    /// Determines if this rematerializable register is both unused and
+    /// live-through in region \p RegionIdx (\p Reg should be the corresponding
+    /// register in the DAG). This guarantees that rematerializing it will
+    /// reduce RP in the region.
+    bool isUnusedLiveThrough(const RematReg &Reg, unsigned RegionIdx) const {
+      assert(RegionIdx < Live.size() && "region index out of range");
+      return LiveIn[RegionIdx] && LiveOut[RegionIdx] &&
+             !Reg.Uses.contains(RegionIdx);
+    }
   };
-
-  /// Determines if rematerializable register \p RegIdx is both unused and
-  /// live-through in region \p I. This guarantees that rematerializing it will
-  /// reduce RP in the region.
-  bool isUnusedLiveThrough(unsigned RegIdx, unsigned RegionIdx) const {
-    assert(RegIdx < RematRegs.size() && "register index out of range");
-    assert(RegionIdx < DAG.Regions.size() && "region index out of range");
-    const RegLiveness &LiveReg = RematRegs[RegIdx];
-    return LiveReg.LiveIn[RegionIdx] && LiveReg.LiveOut[RegionIdx] &&
-           !RDAG.getReg(RegIdx).Uses.contains(RegionIdx);
-  }
-
-  /// The goal of a group is to cluster together rematerializable registers so
-  /// htta we are able to somewhat accurately and predictably track RP changes
-  /// induces by rematerialization of a group of registers.
-  ///
-  /// Things to remember:
-  /// (1) When we rematerialize a register with the DAG, it is no longer a
-  /// live-in/live-out in any region. Instead every copy (and the original reg
-  /// in the case of a partial rematerialization) is local to a single region.
-  /// We can track that nicely.
-  // struct RematGroup {
-  //   BitVector Group;
-
-  //   /// Regions in which at least one register in the chain is live.
-  //   BitVector Live;
-  //   /// Predicted RP difference per impacted region induced by rematerializing
-  //   /// the chain. Impacted regions are exactly the same as the bits set in \ref
-  //   /// Live.
-  //   DenseMap<unsigned, GCNRPTarget::RPDiff> RPDiffs;
-  //   /// Subset of \ref Live regions in which the computed RP difference is
-  //   /// approximate.
-  //   BitVector ApproximateDiff;
-  //   /// Subset of \ref Live regions and \ref ApproximateDiff in which the
-  //   /// overall effect of rematerializing the chain can have a negative effect
-  //   /// on RP.
-  //   BitVector Penalized;
-
-  //   RematGroup(unsigned RootIdx, PreRARematStage &Stage);
-
-  //   void computeChainInfo(unsigned RootIdx, PreRARematStage &Stage);
-
-  //   /// Determines whether rematerializing this chain may push RP above targets
-  //   /// (or push it further from targets) in any of the regions in \p
-  //   /// PenalizedRegions.
-  //   bool maybeDetrimental(const BitVector &PenalizedRegions,
-  //                         ArrayRef<GCNRPTarget> RPTargets) const;
-
-  //   /// Determines whether rematerializing this chain may help reducing RP from
-  //   /// above to below targets in any of the regions in \p TargetRegions.
-  //   bool maybeBeneficial(const BitVector &TargetRegions,
-  //                        ArrayRef<GCNRPTarget> RPTargets) const;
-  // };
 
   /// A scored rematerialization candidate. Higher scores indicate more
   /// beneficial rematerializations. A null score indicate the rematerialization
   /// is not helpful to reduce RP in target regions.
-  struct ScoredRemat {
+  struct RematCandidate {
     /// The register under consideration.
     unsigned RegIdx;
 
@@ -579,8 +537,8 @@ private:
     };
 
     /// This only initializes state-independent characteristics of the score.
-    ScoredRemat(unsigned ChainIdx, const FreqInfo &Freq,
-                const PreRARematStage &Stage);
+    RematCandidate(unsigned RootIdx, const FreqInfo &Freq,
+                   const PreRARematStage &Stage);
 
     /// Updates the rematerialization's score w.r.t. the current \p
     /// TargetRegions and \p RPTargets.
@@ -594,7 +552,7 @@ private:
     /// For each pair of candidates the most important scoring component with
     /// non-equal values determine the result of the comparison (higher is
     /// better).
-    bool operator<(const ScoredRemat &O) const {
+    bool operator<(const RematCandidate &O) const {
       if (hasNullScore())
         return true;
       if (O.hasNullScore())
@@ -614,9 +572,6 @@ private:
 #endif
 
   private:
-    // SmallVector<unsigned, 4> NumRegsPerReg;
-    unsigned NumRegs;
-
     // The three members below are the scoring components, top to bottom from
     // most important to least important when comparing candidates.
 
@@ -671,18 +626,24 @@ private:
                                 SmallVectorImpl<GCNRPTarget> &RPTargets,
                                 const BitVector &RegionsToCheck);
 
+  bool makeValidCandidate(unsigned RegIdx, const BitVector &TargetRegions,
+                          ArrayRef<GCNRPTarget> RPTargets);
+
+  unsigned getNumRegs(const RematReg& Reg) const; 
+
   /// Rematerializes chain \p ChainIdx, updating the DAG's liveness information
   /// to reflect added/deleted registers.
-  unsigned rematerialize(unsigned RegIdx);
+  void rematerialize(unsigned RootIdx);
 
   /// Rolls back the rematerialization of chain \p ChainIdx, updating the DAG's
   /// liveness information to reflect added/deleted registers.
-  void rollback(unsigned RegIdx);
+  void rollback(unsigned RootIdx);
 
   /// If remat alone did not increase occupancy to the target one, rolls back
   /// all rematerializations and resets live-ins/RP in all regions impacted by
   /// the stage to their pre-stage values.
   void finalizeGCNSchedStage() override;
+
 
 public:
   bool initGCNSchedStage() override;

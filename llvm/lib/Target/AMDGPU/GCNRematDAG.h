@@ -122,7 +122,7 @@ struct RematReg {
   /// index that corresponds to this rematerialization.
   DenseMap<unsigned, unsigned> Remats;
 
-  inline bool isRematable() const { return DefMI && !Uses.empty(); }
+  inline bool isUsefulToRematerialize() const { return DefMI && !Uses.empty(); }
 
   inline bool isFullyRematerializable() const {
     return DefMI && DefRegionUsers.empty();
@@ -264,8 +264,7 @@ public:
 
   unsigned getRematRegIdx(const MachineInstr &MI) const;
 
-  Printable print(unsigned RegIdx, bool RootOnly = true,
-                  bool SkipRegions = false) const;
+  Printable print(unsigned RootIdx, bool SkipRoot=false) const;
 
 private:
   SmallVectorImpl<RegionBoundaries> &Regions;
@@ -318,9 +317,6 @@ private:
 
   /// Whether the MI is rematerializable
   bool isReMaterializable(const MachineInstr &MI) const;
-
-  bool isMOAvailableAtUses(const MachineOperand &MO,
-                           SmallDenseMap<unsigned, SlotIndex, 4> Uses) const;
 
   void insertMI(unsigned RegionIdx, MachineInstr *MI) {
     RegionBoundaries &Bounds = Regions[RegionIdx];
