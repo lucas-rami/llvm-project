@@ -675,8 +675,16 @@ bool GCNDownwardRPTracker::advanceBeforeNext(MachineInstr *MI,
         LiveRegs.erase(It);
     } else if (!LI.liveAt(SI)) {
       auto It = LiveRegs.find(MO.getReg());
-      if (It == LiveRegs.end())
+      if (It == LiveRegs.end()) {
+        dbgs() << printReg(MO.getReg()) << " no live @ ";
+        SI.print(dbgs());
+        dbgs() << " :(\n";
+        dbgs() << "UseInternalIterator ? " << UseInternalIterator << '\n';
+        dbgs() << "End of block ? " << (NextMI == MBBEnd) << '\n';
+        dbgs() << "Advancing over " << *CurrMI;
+        LI.print(dbgs());
         llvm_unreachable("register isn't live");
+      }
       CurPressure.inc(MO.getReg(), It->second, LaneBitmask::getNone(), *MRI);
       LiveRegs.erase(It);
     }

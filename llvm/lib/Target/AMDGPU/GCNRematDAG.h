@@ -51,7 +51,8 @@ class RematDAG;
 /// rematerializability can in the general case only be determined when
 /// looking at the register through the lens of a chain.
 struct RematReg {
-  /// Single MI defining the rematerializable register. Set to nullptr after full rematerialization.
+  /// Single MI defining the rematerializable register. Set to nullptr after
+  /// full rematerialization.
   MachineInstr *DefMI;
   /// Region of \p DefRegion.
   unsigned DefRegion;
@@ -69,32 +70,11 @@ struct RematReg {
     RegionUses(MachineInstr *User, const LiveIntervals &LIS)
         : InsertPos(User), Users({User}) {}
 
-    void addUser(MachineInstr *NewUser, const LiveIntervals &LIS) {
-      Users.insert(NewUser);
-      if (Users.empty() || LIS.getInstructionIndex(*NewUser) <
-                               LIS.getInstructionIndex(*InsertPos))
-        InsertPos = *NewUser;
-    }
+    void addUser(MachineInstr *NewUser, const LiveIntervals &LIS);
 
-    void eraseUser(MachineInstr *DeletedUser, const LiveIntervals &LIS) {
-      assert(Users.contains(DeletedUser));
-      Users.erase(DeletedUser);
-      SlotIndex IPSlot = LIS.getInstructionIndex(*InsertPos);
-      if (LIS.getInstructionIndex(*DeletedUser) == IPSlot) {
-        // Recompute earliest insert position when the deleted user was the
-        // earliest one.
-        if (!Users.empty()) {
-          auto UsersIt = Users.begin();
-          InsertPos = *UsersIt;
-          for (auto E = Users.end(); UsersIt != E; ++UsersIt)
-            if (LIS.getInstructionIndex(**UsersIt) <
-                LIS.getInstructionIndex(*InsertPos))
-              InsertPos = *UsersIt;
-        }
-      }
-    }
+    void eraseUser(MachineInstr *DeletedUser, const LiveIntervals &LIS);
   };
-  /// Uses of the register outside its region, mapped by region.
+  /// Uses of the register outside its defining region, mapped by region.
   SmallDenseMap<unsigned, RegionUses, 2> Uses;
   /// Users of the register inside its defining region.
   SmallDenseSet<MachineInstr *, 4> DefRegionUsers;
@@ -117,6 +97,7 @@ struct RematReg {
   /// This register's dependencies, one per unique rematerializable register
   /// operand.
   SmallVector<Dependency, 2> Dependencies;
+  SmallVector<unsigned, 2> UnrematableOprds;
 
   /// Maps regions in which the register was rematerialized to the register
   /// index that corresponds to this rematerialization.
@@ -131,7 +112,7 @@ struct RematReg {
   Printable print(bool SkipRegions = false) const;
 
 private:
-  void rematTo(RematReg &Remat, unsigned UseRegion,
+  void rematTo(RematReg &Remat, unsigned NewRegIdx, unsigned UseRegion,
                MachineBasicBlock::iterator &InsertPos,
                const LiveIntervals &LIS);
 
@@ -264,7 +245,11 @@ public:
 
   unsigned getRematRegIdx(const MachineInstr &MI) const;
 
-  Printable print(unsigned RootIdx, bool SkipRoot=false) const;
+  void updateLiveIntervals();
+
+  Printable print(unsigned RootIdx, bool SkipRoot = false) const;
+  Printable printID(unsigned RegIdx) const;
+  Printable printUser(const MachineInstr *MI) const;
 
 private:
   SmallVectorImpl<RegionBoundaries> &Regions;
@@ -288,9 +273,10 @@ private:
   /// Candidate rematerializable registers, mapped to their index in the
   /// underlying \ref Regs vector.
   DenseMap<Register, unsigned> RegToIdx;
+  DenseMap<unsigned, Register> DeadRegs;
 
-  DenseSet<unsigned> NewRegs;
-  DenseSet<unsigned> RecomputeLiveIntervals;
+  DenseSet<unsigned> LISUpdates;
+  DenseSet<Register> UnrematLISUpdates;
 
   /// Doesn't create any new register, just moves MIs within RegIdx's defining
   /// region.
@@ -304,26 +290,46 @@ private:
 
   void rollbackReg(unsigned RegIdx);
 
-  void deleteRegIfUnused(unsigned RegIdx);
+  bool deleteRegIfUnused(unsigned RegIdx);
 
   void collectRematRegs(unsigned DefRegion);
 
-  void substituteUserReg(MachineInstr &UserMI, unsigned FromIdx,
-                         unsigned ToIdx);
+  void substituteDependencies(unsigned FromRegIdx, unsigned ToRegIdx);
 
-  void substituteRegDependencies(RematReg& FromReg, RematReg& ToReg);
-
-  void updateLiveIntervals();
+  void substituteUserReg(MachineInstr &UserMI, unsigned FromRegIdx,
+                         unsigned ToRegIdx);
 
   /// Whether the MI is rematerializable
   bool isReMaterializable(const MachineInstr &MI) const;
 
-  void insertMI(unsigned RegionIdx, MachineInstr *MI) {
-    RegionBoundaries &Bounds = Regions[RegionIdx];
-    if (Bounds.first == std::next(MachineBasicBlock::iterator(MI)))
-      Bounds.first = MI;
-    LIS.InsertMachineInstrInMaps(*MI);
-    MIRegion.emplace_or_assign(MI, RegionIdx);
+  Register cloneRematReg(RematReg &Reg, unsigned NewRegIdx) {
+    Register NewDefReg = MRI.cloneVirtualRegister(Reg.getDefReg());
+    RegToIdx.insert({NewDefReg, NewRegIdx});
+    return NewDefReg;
+  }
+
+  Register reviveDeadReg(unsigned RegIdx) {
+    Register DeadDefReg = DeadRegs.at(RegIdx);
+    DeadRegs.erase(RegIdx);
+    return DeadDefReg;
+  }
+
+  void reMaterializeTo(unsigned NewRegIdx, MachineBasicBlock &MBB,
+                       MachineBasicBlock::iterator InsertPos, Register NewReg,
+                       MachineInstr &OrigMI) {
+    TII.reMaterialize(MBB, InsertPos, NewReg, 0, OrigMI, TRI);
+    RematReg &Reg = Regs[NewRegIdx];
+    Reg.DefMI = &*std::prev(InsertPos);
+    insertMI(Reg);
+    LISUpdates.insert(NewRegIdx);
+  }
+
+  void insertMI(const RematReg &Reg) {
+    RegionBoundaries &Bounds = Regions[Reg.DefRegion];
+    if (Bounds.first == std::next(MachineBasicBlock::iterator(Reg.DefMI)))
+      Bounds.first = Reg.DefMI;
+    LIS.InsertMachineInstrInMaps(*Reg.DefMI);
+    MIRegion.emplace_or_assign(Reg.DefMI, Reg.DefRegion);
   }
 
   void deleteMI(unsigned RegionIdx, MachineInstr *MI) {
@@ -335,6 +341,15 @@ private:
     MI->eraseFromParent();
     MIRegion.erase(MI);
   }
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+  unsigned CallDepth = 0;
+  raw_ostream &rdbgs() {
+    for (unsigned I = 0; I < CallDepth; ++I)
+      dbgs() << "  ";
+    return dbgs();
+  }
+#endif
 };
 
 } // namespace llvm

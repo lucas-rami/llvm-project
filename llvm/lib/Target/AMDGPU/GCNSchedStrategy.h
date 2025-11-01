@@ -288,10 +288,6 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
 
   std::unique_ptr<GCNSchedStage> createSchedStage(GCNSchedStageID SchedStageID);
 
-  void insertMI(unsigned RegionIdx, MachineInstr *RematMI);
-
-  void deleteMI(unsigned RegionIdx, MachineInstr *MI);
-
 public:
   GCNScheduleDAGMILive(MachineSchedContext *C,
                        std::unique_ptr<MachineSchedStrategy> S);
@@ -490,9 +486,12 @@ private:
     BitVector Penalized;
     unsigned NumRegs;
 
+    DenseSet<unsigned> Merged;
+
     enum { INVALID, VALID_WITH_PARENT, VALID, REMATERIALIZED } Status = INVALID;
 
-    RegLiveness(unsigned RegIdx, PreRARematStage &Stage);
+    RegLiveness(unsigned RegIdx, PreRARematStage &Stage,
+                bool SkipLiveCheck = false);
 
     void makeValidCandidate(const RematReg &Reg);
 
@@ -607,6 +606,16 @@ private:
   /// rescheduled.
   BitVector RescheduleRegions;
 
+  inline std::pair<const RematReg &, const RegLiveness &>
+  getReg(unsigned RegIdx) const {
+    return {RDAG.getReg(RegIdx), RematRegs[RegIdx]};
+  }
+
+  inline std::pair<const RematReg &, RegLiveness &>
+  getReg(unsigned RegIdx) {
+    return {RDAG.getReg(RegIdx), RematRegs[RegIdx]};
+  }
+
   /// Determines the stage's objective (increasing occupancy or reducing
   /// spilling, set in \ref TargetOcc). Defines \ref RPTargets in all regions to
   /// achieve that objective and mark those that don't achieve it in \ref
@@ -629,15 +638,15 @@ private:
   bool makeValidCandidate(unsigned RegIdx, const BitVector &TargetRegions,
                           ArrayRef<GCNRPTarget> RPTargets);
 
+  void addToLiveInOutMaps(unsigned RegIdx);
+
+  void makeLiveAtRematerializedUser(unsigned RegIdx, const RegLiveness &Other);
+
   unsigned getNumRegs(const RematReg &Reg) const;
 
   /// Rematerializes chain \p ChainIdx, updating the DAG's liveness information
   /// to reflect added/deleted registers.
-  void rematerialize(unsigned RootIdx);
-
-  /// Rolls back the rematerialization of chain \p ChainIdx, updating the DAG's
-  /// liveness information to reflect added/deleted registers.
-  void rollback(unsigned RootIdx);
+  unsigned rematerialize(unsigned RootIdx);
 
   /// If remat alone did not increase occupancy to the target one, rolls back
   /// all rematerializations and resets live-ins/RP in all regions impacted by
@@ -645,6 +654,7 @@ private:
   void finalizeGCNSchedStage() override;
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+  Printable printChain(unsigned RootIdx) const;
   Printable printReg(unsigned RegIdx) const;
 #endif
 
