@@ -279,6 +279,8 @@ public:
   /// towards achieving the RP target for at least one register kind.
   bool isDiffBeneficial(const RPDiff &Diff) const;
 
+  unsigned getTotalNetBeneficialSave(const RPDiff &Diff) const;
+
   /// Saves virtual register \p Reg with lanemask \p Mask.
   void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
     RP.inc(Reg, Mask, LaneBitmask::getNone(), MRI);

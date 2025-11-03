@@ -45,10 +45,8 @@ unsigned GCNRegPressure::getRegKind(const TargetRegisterClass *RC,
                     : (STI->isVectorSuperClass(RC) ? AVGPR : VGPR));
 }
 
-void GCNRegPressure::inc(unsigned Reg,
-                         LaneBitmask PrevMask,
-                         LaneBitmask NewMask,
-                         const MachineRegisterInfo &MRI) {
+void GCNRegPressure::inc(unsigned Reg, LaneBitmask PrevMask,
+                         LaneBitmask NewMask, const MachineRegisterInfo &MRI) {
   unsigned NewNumCoveredRegs = SIRegisterInfo::getNumCoveredRegs(NewMask);
   unsigned PrevNumCoveredRegs = SIRegisterInfo::getNumCoveredRegs(PrevMask);
   if (NewNumCoveredRegs == PrevNumCoveredRegs)
@@ -102,13 +100,13 @@ bool GCNRegPressure::less(const MachineFunction &MF, const GCNRegPressure &O,
   unsigned DynamicVGPRBlockSize =
       MF.getInfo<SIMachineFunctionInfo>()->getDynamicVGPRBlockSize();
 
-  const auto SGPROcc = std::min(MaxOccupancy,
-                                ST.getOccupancyWithNumSGPRs(getSGPRNum()));
+  const auto SGPROcc =
+      std::min(MaxOccupancy, ST.getOccupancyWithNumSGPRs(getSGPRNum()));
   const auto VGPROcc = std::min(
       MaxOccupancy, ST.getOccupancyWithNumVGPRs(getVGPRNum(ST.hasGFX90AInsts()),
                                                 DynamicVGPRBlockSize));
-  const auto OtherSGPROcc = std::min(MaxOccupancy,
-                                ST.getOccupancyWithNumSGPRs(O.getSGPRNum()));
+  const auto OtherSGPROcc =
+      std::min(MaxOccupancy, ST.getOccupancyWithNumSGPRs(O.getSGPRNum()));
   const auto OtherVGPROcc =
       std::min(MaxOccupancy,
                ST.getOccupancyWithNumVGPRs(O.getVGPRNum(ST.hasGFX90AInsts()),
@@ -229,8 +227,8 @@ bool GCNRegPressure::less(const MachineFunction &MF, const GCNRegPressure &O,
   }
 
   // Give final precedence to lower general RP.
-  return SGPRImportant ? (getSGPRNum() < O.getSGPRNum()):
-                         (getVGPRNum(ST.hasGFX90AInsts()) <
+  return SGPRImportant ? (getSGPRNum() < O.getSGPRNum())
+                       : (getVGPRNum(ST.hasGFX90AInsts()) <
                           O.getVGPRNum(ST.hasGFX90AInsts()));
 }
 
@@ -262,9 +260,10 @@ static LaneBitmask getDefRegMask(const MachineOperand &MO,
   // We don't rely on read-undef flag because in case of tentative schedule
   // tracking it isn't set correctly yet. This works correctly however since
   // use mask has been tracked before using LIS.
-  return MO.getSubReg() == 0 ?
-    MRI.getMaxLaneMaskForVReg(MO.getReg()) :
-    MRI.getTargetRegisterInfo()->getSubRegIndexLaneMask(MO.getSubReg());
+  return MO.getSubReg() == 0
+             ? MRI.getMaxLaneMaskForVReg(MO.getReg())
+             : MRI.getTargetRegisterInfo()->getSubRegIndexLaneMask(
+                   MO.getSubReg());
 }
 
 static void
@@ -423,36 +422,58 @@ bool GCNRPTarget::isSaveBeneficial(Register Reg) const {
 }
 
 bool GCNRPTarget::isDiffBeneficial(const RPDiff &Diff) const {
-  if (int NumExtraSGPRs = Diff.getSGPRNum() ; NumExtraSGPRs < 0)
-    return RP.getSGPRNum() > MaxSGPRs;
-  if (int NumExtraArchVGPRs = Diff.getArchVGPRNum() ; NumExtraArchVGPRs < 0)
-    return RP.getArchVGPRNum() > MaxVGPRs;
-  if (int NumExtraAGPRs = Diff.getAGPRNum() ; NumExtraAGPRs < 0) 
-    return RP.getAGPRNum() > MaxVGPRs;
+  if (Diff.getSGPRNum() < 0 && RP.getSGPRNum() > MaxSGPRs)
+    return true;
+  if (Diff.getArchVGPRNum() < 0 && RP.getArchVGPRNum() > MaxVGPRs)
+    return true;
+  if (Diff.getAGPRNum() < 0 && RP.getAGPRNum() > MaxVGPRs)
+    return true;
   if (UnifiedRF) {
-    if (int NumVGPRs = Diff.getVGPRNum(true) ; NumVGPRs < 0)
-      return RP.getVGPRNum(true) > MaxUnifiedVGPRs;
+    if (Diff.getVGPRNum(true) < 0 && RP.getVGPRNum(true) > MaxUnifiedVGPRs)
+      return true;
   }
   return false;
 }
 
+unsigned GCNRPTarget::getTotalNetBeneficialSave(const RPDiff &Diff) const {
+  unsigned NetSave = 0;
+
+  int NumExtraSGPRs = Diff.getSGPRNum();
+  if (NumExtraSGPRs < 0 && RP.getSGPRNum() > MaxSGPRs)
+    NetSave += -NumExtraSGPRs;
+
+  if (UnifiedRF) {
+    int NumExtraVGPRs = Diff.getVGPRNum(true);
+    if (NumExtraVGPRs < 0 && RP.getVGPRNum(true) > MaxUnifiedVGPRs)
+      NetSave += -NumExtraVGPRs;
+  } else {
+    int NumExtraArchVGPRs = Diff.getArchVGPRNum();
+    if (NumExtraArchVGPRs < 0 && RP.getArchVGPRNum() > MaxVGPRs)
+      NetSave += -NumExtraArchVGPRs;
+
+    int NumExtraAGPRs = Diff.getAGPRNum();
+    if (NumExtraAGPRs < 0 && RP.getAGPRNum() > MaxVGPRs)
+      NetSave += -NumExtraAGPRs;
+  }
+  return NetSave;
+}
 
 bool GCNRPTarget::wouldViolateTarget(const RPDiff &Diff) const {
-  if (int NumExtraSGPRs = Diff.getSGPRNum() ; NumExtraSGPRs > 0) {
+  if (int NumExtraSGPRs = Diff.getSGPRNum(); NumExtraSGPRs > 0) {
     if (NumExtraSGPRs + RP.getSGPRNum() > MaxSGPRs)
       return true;
   }
-  if (int NumExtraArchVGPRs = Diff.getArchVGPRNum() ; NumExtraArchVGPRs > 0) {
+  if (int NumExtraArchVGPRs = Diff.getArchVGPRNum(); NumExtraArchVGPRs > 0) {
     if (NumExtraArchVGPRs + RP.getArchVGPRNum() > MaxVGPRs)
       return true;
   }
-  if (int NumExtraAGPRs = Diff.getAGPRNum() ; NumExtraAGPRs > 0) {
+  if (int NumExtraAGPRs = Diff.getAGPRNum(); NumExtraAGPRs > 0) {
     if (NumExtraAGPRs + RP.getAGPRNum() > MaxVGPRs)
       return true;
   }
   if (!UnifiedRF)
     return false;
-  if (int NumVGPRs = Diff.getVGPRNum(true) ; NumVGPRs > 0) {
+  if (int NumVGPRs = Diff.getVGPRNum(true); NumVGPRs > 0) {
     if (NumVGPRs + RP.getVGPRNum(true) > MaxUnifiedVGPRs)
       return true;
   }
@@ -509,8 +530,7 @@ GCNRPTracker::LiveRegSet llvm::getLiveRegs(SlotIndex SI,
   return LiveRegs;
 }
 
-void GCNRPTracker::reset(const MachineInstr &MI,
-                         const LiveRegSet *LiveRegsCopy,
+void GCNRPTracker::reset(const MachineInstr &MI, const LiveRegSet *LiveRegsCopy,
                          bool After) {
   const MachineFunction &MF = *MI.getMF();
   MRI = &MF.getRegInfo();
@@ -518,8 +538,7 @@ void GCNRPTracker::reset(const MachineInstr &MI,
     if (&LiveRegs != LiveRegsCopy)
       LiveRegs = *LiveRegsCopy;
   } else {
-    LiveRegs = After ? getLiveRegsAfter(MI, LIS)
-                     : getLiveRegsBefore(MI, LIS);
+    LiveRegs = After ? getLiveRegsAfter(MI, LIS) : getLiveRegsBefore(MI, LIS);
   }
 
   MaxPressure = CurPressure = getRegPressure(*MRI, LiveRegs);
@@ -737,7 +756,8 @@ bool GCNDownwardRPTracker::advance(MachineInstr *MI, bool UseInternalIterator) {
 
 bool GCNDownwardRPTracker::advance(MachineBasicBlock::const_iterator End) {
   while (NextMI != End)
-    if (!advance()) return false;
+    if (!advance())
+      return false;
   return true;
 }
 

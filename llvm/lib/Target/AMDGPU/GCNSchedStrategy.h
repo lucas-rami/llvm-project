@@ -428,43 +428,6 @@ public:
 /// reducing spilling or increasing occupancy is possible, it tries to
 /// rematerialize as few registers as possible to reduce potential negative
 /// effects on function latency.
-///
-/// The stage only supports rematerializing registers that meet all of the
-/// following constraints.
-/// 1. The register is virtual and has a single defining instruction.
-/// 2. The single defining instruction is either deemed rematerializable by the
-///    target-independent logic, or if not, has no non-constant and
-///    non-ignorable physical register use.
-/// 3  The register has no virtual register use whose live range would be
-///    extended by the rematerialization.
-/// 4. The register has no non-debug user in its defining region.
-///
-/// TODO: explain rematerialization dependencies
-/// TODO: clearly state current limitations
-/// TODO: mention that chains always live in a single region
-///
-/// In a tree of possible rematerializations, a given rematerializable register
-/// is a root if and only if it has no rematerializable user that is both
-/// (1) in the same region as itself and
-/// (2) non-available at all points where its user would be rematerialized.
-///
-/// Roots identify rematerialization chains i.e., roots map 1-to-1 to chains.
-/// From the root, the chain is defined as the smallest possible set of
-/// rematerializable registers in the same region as the root that have to be
-/// rematerialized along with the root as to not lengthen any live range.
-/// Furthermore, a chain of registers is said to be rematerializable if and only
-/// if no register in the chain depends on a register from another chain that
-/// hasn't been rematerialized yet, unless that register is available at all
-/// points where it would be needed if the chain were to be rematerialized. This
-/// ensures that rematerializing a chain does not lengthen any live range.
-///
-/// While roots always belong to a single chain, this is not generally true of
-/// non-root rematerializable registers; these belong to at least one chain, but
-/// potentially more. Chains which share at least one non-root rematerializable
-/// register cannot be rematerialized separately. These *chain clusters* must be
-/// rematerialized all at once and are rematerializable if and only if every
-/// rematerialization chain it contains is rematerializable. Chain clusters can
-/// be identified and kept up-to-date using a union-find data-structure.
 class PreRARematStage : public GCNSchedStage {
 private:
   /// Complementary liveness/RP related information to a rematerializable
@@ -481,28 +444,35 @@ private:
     /// approximate.
     BitVector ApproximateDiff;
     /// Subset of \ref Live regions and \ref ApproximateDiff in which the
-    /// overall effect of rematerializing the chain can have a negative effect
-    /// on RP.
+    /// overall effect of rematerializing the register can have a negative
+    /// effect on RP.
     BitVector Penalized;
-    unsigned NumRegs;
+    /// Frequency difference between defining and using regions. Negative values
+    /// indicate we are rematerializing to higher frequency regions; positive
+    /// values indicate the contrary.
+    int64_t FreqDiff;
 
-    DenseSet<unsigned> Merged;
-
-    enum { INVALID, VALID_WITH_PARENT, VALID, REMATERIALIZED } Status = INVALID;
+    /// The register's current candidate status. This starts at INVALID and from
+    /// there can go to ROOT or NON_ROOT when in a candidate identification
+    /// phase, from which point it can go to REMATERIALIZE after being
+    /// rematerialized. The transition from ROOT to NON_ROOT is also possible
+    /// after a candidate that was initially thought to be beneficial turns out
+    /// to be usesless to rematerialize on its own. The opposite transition does
+    /// not happen i.e., a non-root never turns into a root.
+    enum { INVALID, ROOT, NON_ROOT, REMATERIALIZED } Status = INVALID;
 
     RegLiveness(unsigned RegIdx, PreRARematStage &Stage,
                 bool SkipLiveCheck = false);
 
-    void makeValidCandidate(const RematReg &Reg);
-
-    /// Determines whether rematerializing this chain may push RP above \p
+    /// Determines whether rematerializing this register may push RP above \p
     /// RPTargets (or push it further from targets) in any of the regions in \p
     /// PenalizedRegions.
     bool maybeDetrimental(const BitVector &PenalizedRegions,
                           ArrayRef<GCNRPTarget> RPTargets) const;
 
-    /// Determines whether rematerializing this chain may help reducing RP from
-    /// above to below \p RPTargets in any of the regions in \p TargetRegions.
+    /// Determines whether rematerializing this register may help reducing RP
+    /// from above to below \p RPTargets in any of the regions in \p
+    /// TargetRegions.
     bool maybeBeneficial(const BitVector &TargetRegions,
                          ArrayRef<GCNRPTarget> RPTargets) const;
 
@@ -524,25 +494,14 @@ private:
     /// The register under consideration.
     unsigned RegIdx;
 
-    /// Execution frequency information required by scoring heuristics.
-    struct FreqInfo {
-      /// Per-region execution frequencies, normalized to minimum observed
-      /// frequency. 0 when unknown.
-      SmallVector<uint64_t> Regions;
-      /// Maximum observed frequency, normalized to minimum observed frequency.
-      uint64_t MaxFreq = 0;
-
-      FreqInfo(MachineFunction &MF, const GCNScheduleDAGMILive &DAG);
-    };
-
     /// This only initializes state-independent characteristics of the score.
-    RematCandidate(unsigned RootIdx, const FreqInfo &Freq,
-                   const PreRARematStage &Stage);
+    RematCandidate(unsigned RegIdx, int64_t FreqDiff)
+        : RegIdx(RegIdx), FreqDiff(FreqDiff) {}
 
     /// Updates the rematerialization's score w.r.t. the current \p
     /// TargetRegions and \p RPTargets.
     void update(const BitVector &TargetRegions, ArrayRef<GCNRPTarget> RPTargets,
-                const FreqInfo &Freq, const PreRARematStage &Stage);
+                const PreRARematStage &Stage);
 
     /// Returns whether the current score is null, indicating the
     /// rematerialization is useless.
@@ -562,8 +521,15 @@ private:
         return FreqDiff < O.FreqDiff;
       if (RegionImpact != O.RegionImpact)
         return RegionImpact < O.RegionImpact;
-      // Break ties using chain index.
+      // Break ties using register index.
       return RegIdx > O.RegIdx;
+    }
+
+    static std::function<bool(unsigned, unsigned)>
+    sortByIndex(ArrayRef<RematCandidate> Candidates) {
+      return [&Candidates](unsigned LHS, unsigned RHS) {
+        return Candidates[LHS] < Candidates[RHS];
+      };
     }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
@@ -587,6 +553,22 @@ private:
     unsigned RegionImpact;
   };
 
+  /// Execution frequency information required by scoring heuristics.
+  struct FreqInfo {
+    /// Per-region execution frequencies, normalized to minimum observed
+    /// frequency. 0 when unknown.
+    SmallVector<uint64_t> Regions;
+    /// Maximum observed frequency, normalized to minimum observed frequency.
+    uint64_t MaxFreq = 0;
+
+    FreqInfo(MachineFunction &MF, const GCNScheduleDAGMILive &DAG);
+
+    inline uint64_t getOrMax(unsigned RegionIdx) const {
+      uint64_t RegionFreq = Regions[RegionIdx];
+      return RegionFreq ? RegionFreq : MaxFreq;
+    }
+  };
+
   /// The target occupancy the set is trying to achieve. Empty when the
   /// objective is spilling reduction.
   std::optional<unsigned> TargetOcc;
@@ -596,6 +578,8 @@ private:
 
   /// Rematerialization DAG.
   RematDAG RDAG;
+  /// Region frequency information.
+  FreqInfo Freq;
   /// Liveness information for rematerializable registers, in the same order as
   /// in \ref RDAG.
   SmallVector<RegLiveness, 4> RematRegs;
@@ -611,8 +595,7 @@ private:
     return {RDAG.getReg(RegIdx), RematRegs[RegIdx]};
   }
 
-  inline std::pair<const RematReg &, RegLiveness &>
-  getReg(unsigned RegIdx) {
+  inline std::pair<const RematReg &, RegLiveness &> getReg(unsigned RegIdx) {
     return {RDAG.getReg(RegIdx), RematRegs[RegIdx]};
   }
 
@@ -635,17 +618,12 @@ private:
                                 SmallVectorImpl<GCNRPTarget> &RPTargets,
                                 const BitVector &RegionsToCheck);
 
-  bool makeValidCandidate(unsigned RegIdx, const BitVector &TargetRegions,
-                          ArrayRef<GCNRPTarget> RPTargets);
+  bool buildChainAtReg(unsigned RegIdx, const BitVector &TargetRegions,
+                       ArrayRef<GCNRPTarget> RPTargets,
+                       SmallVectorImpl<RematCandidate> &Candidates);
 
-  void addToLiveInOutMaps(unsigned RegIdx);
+  void addToLiveMaps(unsigned RegIdx);
 
-  void makeLiveAtRematerializedUser(unsigned RegIdx, const RegLiveness &Other);
-
-  unsigned getNumRegs(const RematReg &Reg) const;
-
-  /// Rematerializes chain \p ChainIdx, updating the DAG's liveness information
-  /// to reflect added/deleted registers.
   unsigned rematerialize(unsigned RootIdx);
 
   /// If remat alone did not increase occupancy to the target one, rolls back
@@ -669,7 +647,7 @@ public:
       : GCNSchedStage(StageID, DAG),
         RDAG(DAG.Regions, /*RegionsTopDown=*/DAG.doMBBSchedRegionsTopDown(),
              DAG.MRI, *DAG.LIS, MF, *DAG.TRI, *DAG.TII),
-        RescheduleRegions(DAG.Regions.size()) {}
+        Freq(MF, DAG), RescheduleRegions(DAG.Regions.size()) {}
 };
 
 class ILPInitialScheduleStage : public GCNSchedStage {

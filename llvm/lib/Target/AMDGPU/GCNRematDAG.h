@@ -88,11 +88,10 @@ struct RematReg {
   /// its value.
   struct Dependency {
     unsigned MOIdx;
-    bool Available;
     unsigned RegIdx;
 
-    Dependency(unsigned MOIdx, bool Available, unsigned RegIdx)
-        : MOIdx(MOIdx), Available(Available), RegIdx(RegIdx) {}
+    Dependency(unsigned MOIdx, unsigned RegIdx)
+        : MOIdx(MOIdx), RegIdx(RegIdx) {}
   };
   /// This register's dependencies, one per unique rematerializable register
   /// operand.
@@ -102,6 +101,7 @@ struct RematReg {
   /// Maps regions in which the register was rematerialized to the register
   /// index that corresponds to this rematerialization.
   DenseMap<unsigned, unsigned> Remats;
+  std::optional<unsigned> Parent;
 
   inline bool isUsefulToRematerialize() const { return DefMI && !Uses.empty(); }
 
@@ -112,10 +112,6 @@ struct RematReg {
   Printable print(bool SkipRegions = false) const;
 
 private:
-  void rematTo(RematReg &Remat, unsigned NewRegIdx, unsigned UseRegion,
-               MachineBasicBlock::iterator &InsertPos,
-               const LiveIntervals &LIS);
-
   void addUser(MachineInstr *MI, unsigned Region, const LiveIntervals &LIS);
 
   void eraseUser(MachineInstr *MI, unsigned Region, const LiveIntervals &LIS);
@@ -152,8 +148,7 @@ class ChainIterator {
       // Move "horizontally" in the DAG through the dependencies until we find
       // one that is part of the chain and hasn't been visited yet.
       for (; DepIdx < NumDeps; ++DepIdx) {
-        if (!Reg.Dependencies[DepIdx].Available &&
-            Visited.insert(DepIdx).second)
+        if (Visited.insert(DepIdx).second)
           break;
       }
       if (DepIdx == NumDeps) {
@@ -211,6 +206,12 @@ public:
   }
 };
 
+/// This only supports rematerializing registers that meet all of the
+/// following constraints.
+/// 1. The register is virtual and has a single defining instruction.
+/// 2. The single defining instruction is either deemed rematerializable by the
+///    target-independent logic, or if not, has no non-constant and
+///    non-ignorable physical register use.
 class RematDAG {
 public:
   RematDAG(SmallVectorImpl<RegionBoundaries> &Regions, bool RegionsTopDown,
@@ -247,8 +248,9 @@ public:
 
   void updateLiveIntervals();
 
-  Printable print(unsigned RootIdx, bool SkipRoot = false) const;
+  Printable print(unsigned RootIdx) const;
   Printable printID(unsigned RegIdx) const;
+  Printable printRegUsers(unsigned RegIdx) const;
   Printable printUser(const MachineInstr *MI) const;
 
 private:
@@ -283,12 +285,13 @@ private:
   bool moveEarlierInDefRegion(unsigned RegIdx,
                               MachineBasicBlock::iterator InsertPos);
 
+  Register rematTo(unsigned FromRegIdx, unsigned ToRegIdx, unsigned UseRegion,
+                   MachineBasicBlock::iterator &InsertPos);
+
   unsigned rematRegInRegion(unsigned RegIdx, unsigned UseRegion,
                             MachineBasicBlock::iterator InsertPos);
 
   void partiallyRollbackReg(unsigned RegIdx);
-
-  void rollbackReg(unsigned RegIdx);
 
   bool deleteRegIfUnused(unsigned RegIdx);
 
@@ -301,12 +304,6 @@ private:
 
   /// Whether the MI is rematerializable
   bool isReMaterializable(const MachineInstr &MI) const;
-
-  Register cloneRematReg(RematReg &Reg, unsigned NewRegIdx) {
-    Register NewDefReg = MRI.cloneVirtualRegister(Reg.getDefReg());
-    RegToIdx.insert({NewDefReg, NewRegIdx});
-    return NewDefReg;
-  }
 
   Register reviveDeadReg(unsigned RegIdx) {
     Register DeadDefReg = DeadRegs.at(RegIdx);
@@ -344,7 +341,7 @@ private:
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   unsigned CallDepth = 0;
-  raw_ostream &rdbgs() {
+  raw_ostream &rdbgs() const {
     for (unsigned I = 0; I < CallDepth; ++I)
       dbgs() << "  ";
     return dbgs();

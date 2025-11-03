@@ -1110,32 +1110,32 @@ bool ClusteredLowOccStage::initGCNSchedStage() {
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 Printable PreRARematStage::printChain(unsigned RootIdx) const {
   return Printable([&, RootIdx](raw_ostream &OS) {
-    // SmallDenseSet<unsigned, 4> Visited;
-    // SmallVector<unsigned> RegIndices;
-    // std::function<void(unsigned)> Visit = [&](unsigned RegIdx) {
-    //   RegIndices.push_back(RegIdx);
-    //   for (const RematReg::Dependency &Dep :
-    //   RDAG.getReg(RegIdx).Dependencies) {
-    //     int Status = RematRegs[Dep.RegIdx].Status;
-    //     if (Dep.Available || Status != RegLiveness::VALID_WITH_PARENT)
-    //       continue;
-    //     if (Visited.insert(Dep.RegIdx).second)
-    //       Visit(Dep.RegIdx);
-    //   }
-    // };
-    // if (RematRegs[RootIdx].Status != RegLiveness::VALID)
-    //   RegIndices.push_back(RootIdx);
-    // else
-    //   Visit(RootIdx);
+    SmallDenseSet<unsigned, 4> Visited;
+    SmallVector<unsigned> RegIndices;
+    std::function<void(unsigned)> Visit = [&](unsigned RegIdx) {
+      RegIndices.push_back(RegIdx);
+      for (const RematReg::Dependency &Dep : RDAG.getReg(RegIdx).Dependencies) {
+        int Status = RematRegs[Dep.RegIdx].Status;
+        if (Status != RegLiveness::NON_ROOT)
+          continue;
+        if (Visited.insert(Dep.RegIdx).second)
+          Visit(Dep.RegIdx);
+      }
+    };
+    int Status = RematRegs[RootIdx].Status;
+    if (Status == RegLiveness::INVALID || Status == RegLiveness::REMATERIALIZED)
+      RegIndices.push_back(RootIdx);
+    else
+      Visit(RootIdx);
 
-    const auto [_, LiveReg] = getReg(RootIdx);
-    auto RegIdxIt = LiveReg.Merged.begin();
+    auto *RegIdxIt = RegIndices.begin();
     OS << '(' << *RegIdxIt;
-    while (++RegIdxIt != LiveReg.Merged.end())
+    while (++RegIdxIt != RegIndices.end())
       OS << ',' << *RegIdxIt;
     OS << ')';
   });
 }
+
 Printable PreRARematStage::printReg(unsigned RegIdx) const {
   return Printable([&, RegIdx](raw_ostream &OS) {
     OS << printChain(RegIdx) << ' ' << RDAG.getReg(RegIdx).print() << '\n';
@@ -1206,40 +1206,19 @@ bool PreRARematStage::initGCNSchedStage() {
     REMAT_DEBUG(dbgs() << "Nothing to rematerialize\n");
     return false;
   }
-
-  const RematCandidate::FreqInfo FreqInfo(MF, DAG);
   DAG.RegionLiveOuts.buildLiveRegMap();
-  REMAT_DEBUG({
-    dbgs() << "Region frequencies:\n";
-    for (auto [I, Freq] : enumerate(FreqInfo.Regions)) {
-      dbgs() << REMAT_PREFIX << "  [" << I << "] ";
-      if (Freq)
-        dbgs() << Freq;
-      else
-        dbgs() << "unknown ";
-      dbgs() << " | " << *DAG.Regions[I].first;
-    }
-  });
 
-  DenseMap<unsigned, RematCandidate> RegIdxToCandidate;
-  auto EvaluatePossibleCandidate = [&](unsigned RegIdx) -> void {
-    const auto [_, LiveReg] = getReg(RegIdx);
-    if (LiveReg.Status != RegLiveness::INVALID)
-      return;
-    if (!makeValidCandidate(RegIdx, TargetRegions, RPTargets))
-      return;
-    RegIdxToCandidate.try_emplace(RegIdx, RegIdx, FreqInfo, *this);
-    REMAT_DEBUG(dbgs() << "** ADD CANDIDATE " << printReg(RegIdx) << '\n');
-  };
+  SmallVector<RematCandidate, 16> Candidates;
 
   // Create liveness information for rematerializable registers, and identify an
-  // initial set of candidates for rematerialization.
-  REMAT_DEBUG(dbgs() << "Rematerializable registers:\n");
+  // initial set of candidates for rematerialization. Registers are initially in
+  // def-use order so we can determine the first round of valid candidates in
+  // one pass.
   RematRegs.reserve(RDAG.getNumRegs());
   for (const auto &[RegIdx, Reg] : enumerate(RDAG.getRegs())) {
     RematRegs.emplace_back(RegIdx, *this);
-    REMAT_DEBUG(dbgs() << printReg(RegIdx));
-    EvaluatePossibleCandidate(RegIdx);
+    REMAT_DEBUG(dbgs() << RDAG.printID(RegIdx) << " " << Reg.print() << '\n');
+    buildChainAtReg(RegIdx, TargetRegions, RPTargets, Candidates);
   }
 
 #ifndef NDEBUG
@@ -1248,54 +1227,60 @@ bool PreRARematStage::initGCNSchedStage() {
 
   // Rematerialize registers in successive rounds until all RP targets are
   // satisifed or until we run out of rematerialization candidates.
-  while (!RegIdxToCandidate.empty()) {
+  while (!Candidates.empty()) {
     bool TargetsUnsatisfied;
-    SmallVector<unsigned, 16> Candidates;
-    for (auto &[RegIdx, _] : RegIdxToCandidate)
-      Candidates.push_back(RegIdx);
     BitVector RecomputeRP(DAG.Regions.size()),
         PenalizedRegions(TargetRegions.size());
     unsigned NumNewRegs = 0;
+
+    // This stores indices to candidates in the vector of current candidates.
+    // This makes the element copies induced by sorting cheaper.
+    SmallVector<unsigned, 16> CandidateOrder;
+    CandidateOrder.reserve(Candidates.size());
+    for (unsigned I = 0, E = Candidates.size(); I < E; ++I)
+      CandidateOrder.push_back(I);
+
     do {
-      // (Re-)Score and (re-)sort all candidates in increasing score order.
-      for (unsigned RegIdx : Candidates) {
-        RegIdxToCandidate.find(RegIdx)->getSecond().update(
-            TargetRegions, RPTargets, FreqInfo, *this);
-      }
-      sort(Candidates, [&RegIdxToCandidate](unsigned LHS, unsigned RHS) {
-        return RegIdxToCandidate.at(LHS) < RegIdxToCandidate.at(RHS);
-      });
+      // (Re-)Score and (re-)sort all remaining candidates.
+      for (unsigned CandIdx : CandidateOrder)
+        Candidates[CandIdx].update(TargetRegions, RPTargets, *this);
+      sort(CandidateOrder, RematCandidate::sortByIndex(Candidates));
 
       REMAT_DEBUG({
-        if (!RegIdxToCandidate.empty()) {
-          dbgs() << "==== ROUND " << RoundNum << " ====\n"
-                 << REMAT_PREFIX
-                 << "Candidates with non-null score, in rematerialization "
-                    "order:\n";
-          for (unsigned RegIdx : reverse(Candidates)) {
-            const RematCandidate &Cand = RegIdxToCandidate.at(RegIdx);
-            if (Cand.hasNullScore())
-              break;
-            dbgs() << REMAT_PREFIX << "  " << Cand.print() << " | "
-                   << printChain(Cand.RegIdx) << ' '
-                   << RDAG.getReg(RegIdx).print() << '\n';
-          }
-          PrintTargetRegions();
+        dbgs() << "==== ROUND " << RoundNum << " ====\n"
+               << REMAT_PREFIX
+               << "Current candidates, in rematerialization order:\n";
+        for (unsigned CandIdx : reverse(CandidateOrder)) {
+          const RematCandidate &Cand = Candidates[CandIdx];
+          dbgs() << REMAT_PREFIX << "  " << Cand.print() << " | "
+                 << printChain(Cand.RegIdx) << ' '
+                 << RDAG.getReg(Cand.RegIdx).print() << '\n';
         }
+        PrintTargetRegions();
       });
-
-      unsigned CandidateIdx = Candidates.size();
 
       // Rematerialize candidates in decreasing score order until we estimate
       // that all RP targets are satisfied or until rematerialization candidates
       // are no longer useful to decrease RP.
-      for (; CandidateIdx && TargetRegions.any(); --CandidateIdx) {
-        const unsigned RegIdx = Candidates[CandidateIdx - 1];
-        RegLiveness &LiveReg = RematRegs[RegIdx];
-        if (RegIdxToCandidate.at(RegIdx).hasNullScore())
-          break;
+      bool NoRemat = true;
+      do {
+        const unsigned CandIdx = CandidateOrder.pop_back_val();
+        const RematCandidate &Cand = Candidates[CandIdx];
 
-        if (LiveReg.maybeDetrimental(PenalizedRegions, RPTargets))
+        // It is possible that candidates become useslss as we re-score the same
+        // candidates in successive rounds. In that case all remaining
+        // candidates are useless and we can try identifying more
+        // rematerialization candidates.
+        if (Cand.hasNullScore())
+          break;
+        NoRemat = false;
+
+        const unsigned RegIdx = Cand.RegIdx;
+        // Rematerialization can increase RP in regions where dependencies of
+        // the chain root need to be rematerialized even though they have no
+        // users of their own. Ensure we don't push RP above target in those
+        // regions.
+        if (RematRegs[RegIdx].maybeDetrimental(PenalizedRegions, RPTargets))
           continue;
 
         // When previous rematerializations in this round have already satisfied
@@ -1304,7 +1289,7 @@ bool PreRARematStage::initGCNSchedStage() {
         // reality, in which case we interrupt this round and re-score. This
         // also ensures that every rematerialization we perform is possibly
         // impactful in at least one target region.
-        if (!LiveReg.maybeBeneficial(TargetRegions, RPTargets))
+        if (!RematRegs[RegIdx].maybeBeneficial(TargetRegions, RPTargets))
           continue;
 
         // Rematerialize the register and all its unrematerialized dependencies.
@@ -1312,78 +1297,87 @@ bool PreRARematStage::initGCNSchedStage() {
                            << RDAG.getReg(RegIdx).print() << '\n');
         NumNewRegs += rematerialize(RegIdx);
 
-        // FIXME: ugly
-        LiveReg = RematRegs[RegIdx];
+        const RegLiveness &LiveReg = RematRegs[RegIdx];
         RecomputeRP |= LiveReg.ApproximateDiff;
         PenalizedRegions |= LiveReg.Penalized;
         RescheduleRegions |= LiveReg.Live;
         for (const auto &[I, RPDiff] : LiveReg.RPDiffs)
           RPTargets[I].applyDiff(RPDiff);
-
         unsetSatisifedRPTargets(TargetRegions, RPTargets, LiveReg.Live);
-      }
+      } while (!CandidateOrder.empty() && TargetRegions.any());
 #ifndef NDEBUG
       ++RoundNum;
 #endif
       REMAT_DEBUG({
         if (!TargetRegions.any()) {
           dbgs() << "** Interrupt round on all targets achieved\n";
-        } else if (CandidateIdx) {
-          dbgs() << "** Interrupt round on null score for "
-                 << RDAG.print(Candidates[CandidateIdx - 1]) << '\n';
-        } else {
+        } else if (CandidateOrder.empty()) {
           dbgs() << "** Stop on exhausted rematerialization candidates\n";
+        } else {
+          dbgs() << "** Interrupt round on null score for "
+                 << printChain(Candidates[CandidateOrder.back()].RegIdx)
+                 << '\n';
         }
       });
-
-      RDAG.updateLiveIntervals();
-
-      // No point in continuing if nothing was rematerialized this round.
-      if (CandidateIdx == Candidates.size())
+      if (NoRemat)
         break;
 
-      Candidates.truncate(CandidateIdx);
+      // Commit changes to the live intervals before verifying RP in regions
+      // affected unpredictably.
+      RDAG.updateLiveIntervals();
       TargetsUnsatisfied =
           updateAndVerifyRPTargets(TargetRegions, RPTargets, RecomputeRP) ||
           TargetRegions.any();
-    } while (TargetsUnsatisfied && !Candidates.empty());
+    } while (TargetsUnsatisfied && !CandidateOrder.empty());
+
     if (!TargetsUnsatisfied)
       break;
 
-    for (unsigned I = RematRegs.size() - NumNewRegs, E = RematRegs.size();
-         I < E; ++I) {
-      // This should evaluate them from top-most to bottom-most in their
-      // respective regions.
-      EvaluatePossibleCandidate(I);
+    SmallVector<RematCandidate, 16> NewCandidates;
+    std::function<void(unsigned)> FindInDefRegionUsers = [&](unsigned RegIdx) {
+      const auto &[Reg, _] = getReg(RegIdx);
+      for (const MachineInstr *UserMI : Reg.DefRegionUsers) {
+        unsigned UserIdx = RDAG.getRematRegIdx(*UserMI);
+        if (UserIdx != RDAG.getNumRegs())
+          if (buildChainAtReg(UserIdx, TargetRegions, RPTargets, NewCandidates))
+            FindInDefRegionUsers(UserIdx);
+      }
+    };
+
+    // New registers may allow other rematerializations to proceed in their
+    // defining regions.
+    unsigned NumRegs = RematRegs.size();
+    for (unsigned RegIdx = RematRegs.size() - NumNewRegs; RegIdx < NumRegs;
+         ++RegIdx) {
+      if (buildChainAtReg(RegIdx, TargetRegions, RPTargets, NewCandidates))
+        FindInDefRegionUsers(RegIdx);
     }
 
     // All the current unrematerialized candidates are useless as is. They might
     // become useful if rematerialized with their parent(s).
-    SmallVector<unsigned> EvalDefRegionUsers;
-    for (const auto &[RegIdx, _] : RegIdxToCandidate) {
-      RegLiveness &LiveReg = getReg(RegIdx).second;
-      if (LiveReg.Status == RegLiveness::VALID) {
-        // This register will never be picked directly again. It can only be
-        // rematerialized from its parent(s) from now on. All users in its
-        // defining region should be re-evaluated.
-        LiveReg.Status = RegLiveness::VALID_WITH_PARENT;
-        REMAT_DEBUG(dbgs() << "** REMOVE CANDIDATE (" << RegIdx << ")\n");
+    for (const RematCandidate &Cand : Candidates) {
+      const auto &[Reg, LiveReg] = getReg(Cand.RegIdx);
+      if (LiveReg.Status == RegLiveness::ROOT) {
+        // This register is useless on its own and can only be rematerialized
+        // with its parent(s). This may allow other rematerializations in its
+        // defining regions to proceed.
+        REMAT_DEBUG(dbgs() << "** DOWNGRADE TO NON-ROOT "
+                           << printChain(Cand.RegIdx) << '\n');
+        LiveReg.Status = RegLiveness::NON_ROOT;
+        FindInDefRegionUsers(Cand.RegIdx);
       } else {
+        // This register was useful to rematerialize on its own, allowing any
+        // remaining users in its original defining region to be rematerialized
+        // now.
         assert(LiveReg.Status == RegLiveness::REMATERIALIZED &&
                "unexpected status");
-      }
-      EvalDefRegionUsers.push_back(RegIdx);
-    }
-    RegIdxToCandidate.clear();
-
-    for (unsigned RegIdx : EvalDefRegionUsers) {
-      for (const MachineInstr *UserMI : RDAG.getReg(RegIdx).DefRegionUsers) {
-        unsigned UserIdx = RDAG.getRematRegIdx(*UserMI);
-        if (UserIdx == RDAG.getNumRegs())
-          continue;
-        EvaluatePossibleCandidate(UserIdx);
+        // If the register was fully rematerialized it has no remaining user in
+        // its defining region by construction.
+        if (Reg.DefMI)
+          FindInDefRegionUsers(Cand.RegIdx);
       }
     }
+    Candidates = std::move(NewCandidates);
   }
 
   if (RescheduleRegions.none())
@@ -1976,7 +1970,6 @@ PreRARematStage::RegLiveness::RegLiveness(unsigned RegIdx,
   // Mark regions in which the rematerializable register is live before being
   // potentially rematerialized.
   Register DefReg = Reg.getDefReg();
-
   if (!SkipLiveCheck) {
     for (unsigned I = 0, E = DAG.Regions.size(); I != E; ++I) {
       auto LiveInIt = DAG.LiveIns[I].find(DefReg);
@@ -1993,6 +1986,10 @@ PreRARematStage::RegLiveness::RegLiveness(unsigned RegIdx,
   }
   Live.set(Reg.DefRegion);
 
+  // Initially we consider that each register will be rematerialized without any
+  // of its dependencies so we don't account for any dependency-induced RP
+  // impact below.
+
   // RP will decrease or stay the same in regions where the register is live
   // (even if the register will only be partially rematerialized as part of this
   // chain it will stop being live till the end of its own region so RP may
@@ -2002,14 +1999,22 @@ PreRARematStage::RegLiveness::RegLiveness(unsigned RegIdx,
     if (!isUnusedLiveThrough(Reg, I))
       ApproximateDiff.set(I);
   }
-  NumRegs += Stage.getNumRegs(Reg);
 
-  // Initially we consider that each register will be rematerialized without any
-  // of its dependencies so we don't account for any dependency-induced RP
-  // impact here.
-
-  // FIXME
-  Merged.insert(RegIdx);
+  // Get frequencies of defining and using regions. A rematerialization from
+  // the least frequent region to the most frequent region will yield the
+  // greatest latency penalty and therefore should get minimum score.
+  // Reciprocally, a rematerialization in the other direction should get
+  // maximum score. Default to values that will yield the worst possible
+  // score given known frequencies in order to penalize rematerializations
+  // from or into regions whose frequency is unknown.
+  int64_t DefOrOne =
+      Reg.isFullyRematerializable()
+          ? std::max(Stage.Freq.Regions[Reg.DefRegion], (uint64_t)1)
+          : 0;
+  int64_t UseOrMax = 0;
+  for (const auto &[UseRegion, _] : Reg.Uses)
+    UseOrMax += Stage.Freq.getOrMax(UseRegion);
+  FreqDiff = DefOrOne - UseOrMax;
 }
 
 bool PreRARematStage::RegLiveness::maybeDetrimental(
@@ -2032,41 +2037,17 @@ bool PreRARematStage::RegLiveness::maybeBeneficial(
   return false;
 }
 
-void PreRARematStage::makeLiveAtRematerializedUser(unsigned RegIdx,
-                                                   const RegLiveness &Other) {
-  auto [Reg, LiveReg] = getReg(RegIdx);
-  LiveReg.LiveIn |= Other.LiveIn;
-  LiveReg.Live |= Other.LiveOut;
-  LiveReg.Live |= Other.Live;
-
-  Register DefReg = Reg.getDefReg();
-  for (unsigned I : Other.Live.set_bits()) {
-    if (!LiveReg.Live[I]) {
-      LiveReg.Live.set(I);
-      LiveReg.RPDiffs[I].dec(DefReg, Reg.Mask, DAG.MRI);
-      if (!LiveReg.isUnusedLiveThrough(Reg, I))
-        LiveReg.ApproximateDiff.set(I);
-    }
-  }
-}
-
-void PreRARematStage::addToLiveInOutMaps(unsigned RegIdx) {
+void PreRARematStage::addToLiveMaps(unsigned RegIdx) {
   const auto [Reg, LiveReg] = getReg(RegIdx);
   std::pair<Register, LaneBitmask> RegAndMask(Reg.getDefReg(), Reg.Mask);
-  for (unsigned I : LiveReg.LiveIn.set_bits()) {
+  for (unsigned I : LiveReg.LiveIn.set_bits())
     DAG.LiveIns[I].insert(RegAndMask);
-    REMAT_DEBUG(dbgs() << "  Re-adding " << RDAG.printID(RegIdx)
-                       << " to live-ins of [" << I << "]\n");
-  }
-  for (unsigned I : LiveReg.LiveOut.set_bits()) {
+  for (unsigned I : LiveReg.LiveOut.set_bits())
     DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I).insert(RegAndMask);
-    REMAT_DEBUG(dbgs() << "  Re-adding " << RDAG.printID(RegIdx)
-                       << " to live-outs of [" << I << "]\n");
-  }
 }
 
-PreRARematStage::RematCandidate::FreqInfo::FreqInfo(
-    MachineFunction &MF, const GCNScheduleDAGMILive &DAG) {
+PreRARematStage::FreqInfo::FreqInfo(MachineFunction &MF,
+                                    const GCNScheduleDAGMILive &DAG) {
   assert(DAG.MLI && "MLI not defined in DAG");
   MachineBranchProbabilityInfo MBPI;
   MachineBlockFrequencyInfo MBFI(MF, MBPI, *DAG.MLI);
@@ -2093,50 +2074,32 @@ PreRARematStage::RematCandidate::FreqInfo::FreqInfo(
   MaxFreq /= MinFreq;
 }
 
-PreRARematStage::RematCandidate::RematCandidate(unsigned RegIdx,
-                                                const FreqInfo &Freq,
-                                                const PreRARematStage &Stage)
-    : RegIdx(RegIdx) {
-  // Get frequencies of defining and using regions. A rematerialization from
-  // the least frequent region to the most frequent region will yield the
-  // greatest latency penalty and therefore should get minimum score.
-  // Reciprocally, a rematerialization in the other direction should get
-  // maximum score. Default to values that will yield the worst possible
-  // score given known frequencies in order to penalize rematerializations
-  // from or into regions whose frequency is unknown.
-  const auto [Reg, _] = Stage.getReg(RegIdx);
-  int64_t DefOrOne = Reg.isFullyRematerializable()
-                         ? std::max(Freq.Regions[Reg.DefRegion], (uint64_t)1)
-                         : 0;
-  int64_t UseOrMax = 0;
-  for (const auto &[UseRegion, _] : Reg.Uses) {
-    uint64_t RegionFreq = Freq.Regions[UseRegion];
-    UseOrMax += RegionFreq ? RegionFreq : Freq.MaxFreq;
-  }
-  FreqDiff = DefOrOne - UseOrMax;
-}
-
 void PreRARematStage::RematCandidate::update(const BitVector &TargetRegions,
                                              ArrayRef<GCNRPTarget> RPTargets,
-                                             const FreqInfo &Freq,
                                              const PreRARematStage &Stage) {
   const auto [Reg, LiveReg] = Stage.getReg(RegIdx);
   MaxFreq = 0;
   RegionImpact = 0;
 
-  unsigned NumBenefitingRegions = 0;
   for (unsigned RegionIdx : TargetRegions.set_bits()) {
-    const auto It = LiveReg.RPDiffs.find(RegionIdx);
-    if (It == LiveReg.RPDiffs.end() ||
-        !RPTargets[RegionIdx].isDiffBeneficial(It->getSecond()))
+    const auto Diff = LiveReg.RPDiffs.find(RegionIdx);
+    if (Diff == LiveReg.RPDiffs.end())
       continue;
-    bool UnusedLT = LiveReg.isUnusedLiveThrough(Reg, RegionIdx);
+
+    // The rematerialization must contribute positively in at least one register
+    // class with usage above the RP target.
+    const GCNRPTarget::RPDiff &RegionDiff = Diff->getSecond();
+    const GCNRPTarget &RegionTarget = RPTargets[RegionIdx];
+    unsigned NetSave = RegionTarget.getTotalNetBeneficialSave(RegionDiff);
+    if (!NetSave)
+      continue;
 
     // Regions in which RP is guaranteed to decrease have more weight.
-    NumBenefitingRegions += UnusedLT ? 2 : 1;
+    bool UnusedLT = LiveReg.isUnusedLiveThrough(Reg, RegionIdx);
+    RegionImpact += (UnusedLT ? 2 : 1) * NetSave;
 
     if (!Stage.TargetOcc) {
-      uint64_t RegionFreq = Freq.Regions[RegionIdx];
+      uint64_t RegionFreq = Stage.Freq.Regions[RegionIdx];
       if (!UnusedLT) {
         // Apply a frequency penalty in regions in which we are not sure
         // that RP will decrease.
@@ -2145,75 +2108,62 @@ void PreRARematStage::RematCandidate::update(const BitVector &TargetRegions,
       MaxFreq = std::max(MaxFreq, RegionFreq);
     }
   }
-  RegionImpact += NumBenefitingRegions * LiveReg.NumRegs;
 }
 
-bool PreRARematStage::makeValidCandidate(unsigned RegIdx,
-                                         const BitVector &TargetRegions,
-                                         ArrayRef<GCNRPTarget> RPTargets) {
-  // We don't want to have any of the registers that will be rematerialized with
-  // the register have any uses outside of the register's own using regions or
-  // defining regions, which we also want to be the dependencies' defining
-  // regions. This ensures that we can somewhat predict the RP impact the
-  // rematerialization is going to have.
+bool PreRARematStage::buildChainAtReg(
+    unsigned RegIdx, const BitVector &TargetRegions,
+    ArrayRef<GCNRPTarget> RPTargets,
+    SmallVectorImpl<RematCandidate> &Candidates) {
   auto [Reg, LiveReg] = getReg(RegIdx);
-  assert(LiveReg.Status == RegLiveness::INVALID);
+  assert(Reg.DefMI && "dead register");
+  if (LiveReg.Status != RegLiveness::INVALID)
+    return false;
+
+  // All dependencies must be in the same region and either rematerialized or
+  // needing to be rematerialized with a parent to be useful. Recurse on
+  // invalid dependencies if Evaluated is non-null.
   for (const RematReg::Dependency &Dep : Reg.Dependencies) {
-    if (Dep.Available)
-      continue;
     const auto [DepReg, DepLiveReg] = getReg(Dep.RegIdx);
     assert(DepReg.DefMI && "unexpected removed dependency");
     if (RDAG.getRegion(DepReg.DefMI) != Reg.DefRegion)
+      return RegLiveness::INVALID;
+    if (DepLiveReg.Status == RegLiveness::INVALID ||
+        DepLiveReg.Status == RegLiveness::ROOT) {
+      // The dependency is unrematerializable or potentially beneficial to
+      // rematerialize on its own, do not combine it (yet, at least) with this
+      // register.
       return false;
-    // FIXME: relax this more? No restriction on using regions?
-    // The dependency being valid guarantees that its using regions are a
-    // superset of its own dependencies' combined using regions. By
-    // transitivity, if the dependency's using regions are also a subset of the
-    // current register's, then all combined using regions of the register's
-    // transitive dependencies are a subset of the current register's.
-    int Status = DepLiveReg.Status;
-    if (Status == RegLiveness::INVALID || Status == RegLiveness::VALID)
-      return false;
-    for (const auto &[UseRegion, _] : DepReg.Uses) {
-      if (!Reg.Uses.contains(UseRegion))
-        return false;
     }
   }
 
+  // Integrate RP/latency differences induced by rematerializing dependencies
+  // with this parent. This is only an approximation of reality when a
+  // register has multiple parents in the same region in the rematerialization
+  // DAG, since we will account for the dependencies' impact multiple times
+  // (once per parent) in such cases.
   for (const RematReg::Dependency &Dep : Reg.Dependencies) {
-    if (Dep.Available || LiveReg.Status == RegLiveness::REMATERIALIZED)
-      continue;
+    // FIXME: better RP/latency change estimation using partial/full
+    // rematerialization detection?
 
-    // Integrate the RP difference induced by rematerializing the dependency
-    // with this parent. This is only an approximation of reality when a
-    // register has multiple parents in the rematerialization DAG, since we
-    // might count the same RP contributions multiple times in such cases.
-
-    // Account for the dependency's contributions to RP differences.
-    const auto [DepReg, DepLiveReg] = getReg(RegIdx);
-    for (unsigned I : DepLiveReg.Merged)
-      LiveReg.Merged.insert(I);
+    // Account for the dependency's contributions to RP/latency differences.
+    const auto [DepReg, DepLiveReg] = getReg(Dep.RegIdx);
     for (const auto &[Region, Diff] : DepLiveReg.RPDiffs)
       LiveReg.RPDiffs[Region] += Diff;
     LiveReg.ApproximateDiff |= DepLiveReg.ApproximateDiff;
+    LiveReg.FreqDiff += DepLiveReg.FreqDiff;
 
-    // Account for extra RP cost by rematerializing the dependent register to
-    // regions where it is not directly needed. Not super accurate (may be
-    // pessimistic) but good enough.
+    // Account for extra RP/latency cost induced by rematerializing the
+    // dependent register to regions where it is not itself needed and has not
+    // already been rematerialized to.
     Register DepDefReg = DepReg.getDefReg();
     for (const auto &[RematRegion, _] : Reg.Uses) {
       if (!DepReg.Remats.contains(RematRegion) &&
           !DepReg.Uses.contains(RematRegion)) {
         LiveReg.RPDiffs[RematRegion].inc(DepDefReg, Reg.Mask, DAG.MRI);
         LiveReg.ApproximateDiff.set(RematRegion);
+        LiveReg.FreqDiff -= Freq.getOrMax(RematRegion);
       }
     }
-
-    // The dependency will be rematerialized along the current candidate. Higher
-    // register counts are given higher scores when evaluating candidates so
-    // this is slightly optimistic in considering the dependency won't be
-    // rematerialized through another one of its parent.
-    LiveReg.NumRegs += DepLiveReg.NumRegs;
   }
 
   // Mark regions in which the overall effect on RP can be negative.
@@ -2223,86 +2173,46 @@ bool PreRARematStage::makeValidCandidate(unsigned RegIdx,
       LiveReg.Penalized.set(I);
   }
 
-  REMAT_DEBUG(dbgs() << "** VALID CHAIN " << printChain(RegIdx) << '\n');
-
-  if (!Reg.isUsefulToRematerialize() ||
-      !LiveReg.maybeBeneficial(TargetRegions, RPTargets)) {
-    // This candidate will only be useful as part of a bigger chain.
-    LiveReg.Status = RegLiveness::VALID_WITH_PARENT;
+  if (Reg.isUsefulToRematerialize() &&
+      LiveReg.maybeBeneficial(TargetRegions, RPTargets)) {
+    LiveReg.Status = RegLiveness::ROOT;
+    Candidates.emplace_back(RegIdx, LiveReg.FreqDiff);
+    REMAT_DEBUG(dbgs() << "** ADD CANDIDATE " << printReg(RegIdx));
     return false;
   }
-  LiveReg.Status = RegLiveness::VALID;
+  LiveReg.Status = RegLiveness::NON_ROOT;
   return true;
-}
-
-unsigned PreRARematStage::getNumRegs(const RematReg &Reg) const {
-  const TargetRegisterClass &RC = *DAG.MRI.getRegClass(Reg.getDefReg());
-  unsigned RegSize = DAG.TRI->getRegSizeInBits(RC);
-  if (unsigned SubIdx = Reg.DefMI->getOperand(0).getSubReg()) {
-    // The following may return -1 (i.e., a large unsigned number) on
-    // indices that may be used to access subregisters of multiple sizes; in
-    // such cases fallback on the size derived from the register class.
-    unsigned SubRegSize = DAG.TRI->getSubRegIdxSize(SubIdx);
-    if (SubRegSize < RegSize)
-      RegSize = SubRegSize;
-  }
-  return divideCeil(RegSize, 32);
 }
 
 unsigned PreRARematStage::rematerialize(unsigned RootIdx) {
   SmallDenseSet<unsigned, 4> Visited;
-  unsigned NumNewRegs = 0;
-  std::function<void(unsigned)> Remat = [&](unsigned RegIdx) {
-    // Copy dependencies to avoid memory issues on the list of RematReg's when
-    // recursively rematerializing.
-    SmallVector<RematReg::Dependency, 2> DepsCopy(
-        RDAG.getReg(RegIdx).Dependencies);
-    for (const RematReg::Dependency &Dep : DepsCopy) {
-      int Status = RematRegs[Dep.RegIdx].Status;
-      if (Dep.Available || Status != RegLiveness::VALID_WITH_PARENT)
+  SmallVector<unsigned, 4> RematOrder;
+  std::function<void(unsigned)> PostOrderTraversal = [&](unsigned RegIdx) {
+    const auto [Reg, LiveReg] = getReg(RegIdx);
+    for (const RematReg::Dependency &Dep : Reg.Dependencies) {
+      if (RematRegs[Dep.RegIdx].Status != RegLiveness::NON_ROOT)
         continue;
       if (Visited.insert(Dep.RegIdx).second)
-        Remat(Dep.RegIdx);
+        PostOrderTraversal(Dep.RegIdx);
     }
+    RematOrder.push_back(RegIdx);
 
     // Remove the register from live-in/out lists.
-    const auto [Reg, LiveReg] = getReg(RegIdx);
     Register DefReg = Reg.getDefReg();
     for (unsigned I : LiveReg.Live.set_bits()) {
       DAG.LiveIns[I].erase(DefReg);
       DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I).erase(DefReg);
     }
     LiveReg.Status = RegLiveness::REMATERIALIZED;
+  };
+  PostOrderTraversal(RootIdx);
 
-    // Available dependencies are not rematerialized along with the register and
-    // therefore may need to be re-added as live-ins/outs if they were
-    // rematerialized first. This may look like a range extension but the set of
-    // regions where they become live is guaranteed to be a subset of what it
-    // was at the beginning of the stage. This is also a pessimistic
-    // approximation of the regions where the dependency needs to be live; if
-    // its parent was not fully rematerialized the dependency may not need to be
-    // live everywhere where the parent is.
-    // FIXME: if we delay these live-ins/outs updates after updating live
-    // intervals after the round we may be able to accurately determine in which
-    // regions exactly the register needs to be live.
-    for (const RematReg::Dependency &Dep : Reg.Dependencies) {
-      if (Dep.Available) {
-        makeLiveAtRematerializedUser(Dep.RegIdx, LiveReg);
-        addToLiveInOutMaps(Dep.RegIdx);
-      }
-    }
-
+  unsigned NumNewRegs = 0;
+  for (unsigned RegIdx : RematOrder) {
     NumNewRegs += RDAG.rematerialize(RegIdx);
     REMAT_DEBUG(dbgs() << "  ** REMAT (" << RegIdx << ") added "
                        << RDAG.getNumRegs() - RematRegs.size()
                        << " new register(s)\n");
-    // Create corresponding live information for new register. By construction
-    // these are only live within their defining region.
-    unsigned I = RematRegs.size(), E = RDAG.getNumRegs();
-    if (I < E)
-      RematRegs.reserve(E);
-    for (; I < E; ++I)
-      RematRegs.emplace_back(I, *this, /*SkipLiveCheck=*/true);
 
     // Every rematerialization we do here is likely to add more instructions
     // overall and move instructions to higher frequency regions, increasing
@@ -2313,8 +2223,19 @@ unsigned PreRARematStage::rematerialize(unsigned RootIdx) {
     // rematerialization decision.
     if (TargetOcc)
       Rollbacks.push_back(RegIdx);
-  };
-  Remat(RootIdx);
+  }
+
+  // Create corresponding live information for new register. By construction
+  // these are only live within their defining region.
+  if (NumNewRegs) {
+    unsigned I = RematRegs.size(), E = RDAG.getNumRegs();
+    RematRegs.reserve(E);
+    for (; I < E; ++I) {
+      RematRegs.emplace_back(I, *this, /*SkipLiveCheck=*/true);
+      REMAT_DEBUG(dbgs() << "    " << RDAG.printID(I) << " "
+                         << RDAG.getReg(I).print() << '\n');
+    }
+  }
   return NumNewRegs;
 }
 
@@ -2366,7 +2287,7 @@ void PreRARematStage::finalizeGCNSchedStage() {
   for (unsigned RegIdx : reverse(Rollbacks)) {
     REMAT_DEBUG(dbgs() << "** ROLLBACK " << RDAG.printID(RegIdx) << '\n');
     RDAG.rollback(RegIdx);
-    addToLiveInOutMaps(RegIdx);
+    addToLiveMaps(RegIdx);
     RecomputeRP |= RematRegs[RegIdx].Live;
   }
   RDAG.updateLiveIntervals();
