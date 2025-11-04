@@ -419,12 +419,14 @@ define amdgpu_kernel void @memcpy_known(ptr addrspace(7) %src, ptr addrspace(7) 
 ; GISEL-GFX942-NEXT:    s_load_dword s11, s[4:5], 0x34
 ; GISEL-GFX942-NEXT:    s_load_dwordx4 s[12:15], s[4:5], 0x44
 ; GISEL-GFX942-NEXT:    s_mov_b32 s16, 0
-; GISEL-GFX942-NEXT:    s_or_b64 s[4:5], s[6:7], s[4:5]
-; GISEL-GFX942-NEXT:    s_mov_b32 s6, s15
-; GISEL-GFX942-NEXT:    s_mov_b32 s2, s7
-; GISEL-GFX942-NEXT:    s_waitcnt lgkmcnt(0)
-; GISEL-GFX942-NEXT:    s_or_b64 s[6:7], s[6:7], s[2:3]
 ; GISEL-GFX942-NEXT:    v_mov_b32_e32 v0, s16
+; GISEL-GFX942-NEXT:    s_waitcnt lgkmcnt(0)
+; GISEL-GFX942-NEXT:    s_mov_b32 s8, s1
+; GISEL-GFX942-NEXT:    s_mov_b32 s9, s2
+; GISEL-GFX942-NEXT:    s_mov_b32 s10, s3
+; GISEL-GFX942-NEXT:    s_mov_b32 s4, s13
+; GISEL-GFX942-NEXT:    s_mov_b32 s5, s14
+; GISEL-GFX942-NEXT:    s_mov_b32 s6, s15
 ; GISEL-GFX942-NEXT:    v_mov_b32_e32 v1, 0x2000
 ; GISEL-GFX942-NEXT:  .LBB0_1: ; %load-store-loop
 ; GISEL-GFX942-NEXT:    ; =>This Inner Loop Header: Depth=1
@@ -959,12 +961,14 @@ define amdgpu_kernel void @memcpy_known_medium(ptr addrspace(7) %src, ptr addrsp
 ; GISEL-GFX942-NEXT:    s_load_dword s11, s[4:5], 0x34
 ; GISEL-GFX942-NEXT:    s_load_dwordx4 s[12:15], s[4:5], 0x44
 ; GISEL-GFX942-NEXT:    s_mov_b32 s16, 0
-; GISEL-GFX942-NEXT:    s_or_b64 s[4:5], s[6:7], s[4:5]
-; GISEL-GFX942-NEXT:    s_mov_b32 s6, s15
-; GISEL-GFX942-NEXT:    s_mov_b32 s2, s7
-; GISEL-GFX942-NEXT:    s_waitcnt lgkmcnt(0)
-; GISEL-GFX942-NEXT:    s_or_b64 s[6:7], s[6:7], s[2:3]
 ; GISEL-GFX942-NEXT:    v_mov_b32_e32 v0, s16
+; GISEL-GFX942-NEXT:    s_waitcnt lgkmcnt(0)
+; GISEL-GFX942-NEXT:    s_mov_b32 s8, s1
+; GISEL-GFX942-NEXT:    s_mov_b32 s9, s2
+; GISEL-GFX942-NEXT:    s_mov_b32 s10, s3
+; GISEL-GFX942-NEXT:    s_mov_b32 s4, s13
+; GISEL-GFX942-NEXT:    s_mov_b32 s5, s14
+; GISEL-GFX942-NEXT:    s_mov_b32 s6, s15
 ; GISEL-GFX942-NEXT:    v_mov_b32_e32 v1, 0x100
 ; GISEL-GFX942-NEXT:  .LBB1_1: ; %load-store-loop
 ; GISEL-GFX942-NEXT:    ; =>This Inner Loop Header: Depth=1
