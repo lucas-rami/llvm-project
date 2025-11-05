@@ -263,25 +263,34 @@ void RematDAG::partiallyRollbackReg(unsigned RegIdx) {
 
   // The register no longer exist in its defining region, we first need to
   // re-rematerialize it in its original defining region. Any of its
-  // non-avaiable dependencies that were fully rematerialized need to be
-  // partially rollbacked first as well.
+  // dependencies that were fully rematerialized need to be partially rollbacked
+  // first as well.
   for (const RematReg::Dependency &Dep : Reg.Dependencies) {
     LISUpdates.insert(Dep.RegIdx);
     partiallyRollbackReg(Dep.RegIdx);
-    assert(getReg(Dep.RegIdx).DefMI && "dependency was not roll backed");
+    assert(getReg(Dep.RegIdx).DefMI && "dependency was not rolled back");
   }
 
-  // Recreate an MI from one of the rematerializations.
+  // Re-rematerialize MI in its original region from one of the
+  // rematerializations. Note that it may not be rematerialized exactly in the
+  // same position as originally within the region, but it should not matter
+  // much. We cannot get the parent basic block from the region boundaries
+  // because the latter may have been completely emptied out in which case both
+  // bounds can point to the MBB's end guard.
   unsigned ModelRegIdx = Reg.Remats.begin()->second;
   RematReg &ModelReg = Regs[ModelRegIdx];
-  Register DeadDefReg = reviveDeadReg(RegIdx);
+  auto [DeadDefReg, OldSlot] = reviveDeadReg(RegIdx);
 
-  // Re-rematerialize MI in its original region. Note that it may not be
-  // rematerialized exactly in the same position as originally within the
-  // region, but it should not matter much. We cannot get the parent basic block
-  // from the region boundaries because the latter may have been completely
-  // emptied out in which case both bounds can point to the MBB's end guard.
-  MachineBasicBlock::iterator InsertPos(Regions[Reg.DefRegion].second);
+  // Try to re-create the original instruction as close as possible to the
+  // initial position.
+  SlotIndex NextSlot = LIS.getSlotIndexes()->getNextNonNullIndex(OldSlot);
+  MachineInstr *NextMI = LIS.getInstructionFromIndex(NextSlot);
+  MachineBasicBlock::iterator InsertPos;
+  if (!NextMI || MIRegion.at(NextMI) != Reg.DefRegion)
+    InsertPos = Regions[Reg.DefRegion].second;
+  else
+    InsertPos = NextMI;
+
   MachineBasicBlock &MBB = *RegionBB[Reg.DefRegion];
   reMaterializeTo(RegIdx, MBB, InsertPos, DeadDefReg, *ModelReg.DefMI);
   substituteDependencies(ModelRegIdx, RegIdx);
@@ -358,13 +367,14 @@ bool RematDAG::deleteRegIfUnused(unsigned RegIdx) {
     Regs[Dep.RegIdx].eraseUser(Reg.DefMI, Reg.DefRegion, LIS);
     deleteRegIfUnused(Dep.RegIdx);
   }
+
+  DeadRegs.try_emplace(RegIdx, DefReg, LIS.getInstructionIndex(*Reg.DefMI));
   LIS.removeInterval(DefReg);
   LISUpdates.erase(RegIdx);
-  DeadRegs.insert({RegIdx, DefReg});
   deleteMI(Reg.DefRegion, Reg.DefMI);
 
   Reg.DefMI = nullptr;
-  if (Reg.Parent){
+  if (Reg.Parent) {
     assert(Regs[*Reg.Parent].Remats.contains(Reg.DefRegion) && "broken link");
     Regs[*Reg.Parent].Remats.erase(Reg.DefRegion);
   }
@@ -812,7 +822,7 @@ Printable RematDAG::printID(unsigned RegIdx) const {
   return Printable([&, RegIdx](raw_ostream &OS) {
     const RematReg &Reg = getReg(RegIdx);
     OS << '(' << RegIdx << '/';
-    Register DefReg = Reg.DefMI ? Reg.getDefReg() : DeadRegs.at(RegIdx);
+    Register DefReg = Reg.DefMI ? Reg.getDefReg() : DeadRegs.at(RegIdx).Reg;
     unsigned SubIdx = Reg.DefMI ? Reg.DefMI->getOperand(0).getSubReg() : 0;
     OS << printReg(DefReg, &TRI, SubIdx, &MRI) << ")[" << Reg.DefRegion << "]";
   });

@@ -65,6 +65,17 @@ static cl::opt<bool> DisableClusteredLowOccupancy(
              "rescheduling for ILP scheduling stage."),
     cl::init(false));
 
+static cl::opt<bool> DisablePreRARemat(
+    "amdgpu-disable-pre-ra-remat", cl::Hidden,
+    cl::desc("Disable pre-RA rematerialization for ILP scheduling stage."),
+    cl::init(false));
+
+static cl::opt<bool> DisablePreRARematRollback(
+    "amdgpu-disable-pre-ra-rollback", cl::Hidden,
+    cl::desc("Disable rollback in pre-RA rematerialization for ILP scheduling "
+             "stage."),
+    cl::init(false));
+
 static cl::opt<unsigned> ScheduleMetricBias(
     "amdgpu-schedule-metric-bias", cl::Hidden,
     cl::desc(
@@ -1160,6 +1171,8 @@ bool PreRARematStage::initGCNSchedStage() {
   // regions inbetween the defs and region we sinked the def to. Will need to be
   // fixed if there is another pass after this pass.
   assert(!S.hasNextStage());
+  if (DisablePreRARemat)
+    return false;
 
   if (!GCNSchedStage::initGCNSchedStage() || DAG.Regions.size() <= 1)
     return false;
@@ -2037,6 +2050,16 @@ bool PreRARematStage::RegLiveness::maybeBeneficial(
   return false;
 }
 
+void PreRARematStage::removeFromLiveMaps(unsigned RegIdx) {
+  const auto [Reg, LiveReg] = getReg(RegIdx);
+  Register DefReg = Reg.getDefReg();
+  for (unsigned I : LiveReg.LiveIn.set_bits())
+    DAG.LiveIns[I].erase(DefReg);
+  for (unsigned I : LiveReg.LiveOut.set_bits())
+    DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I).erase(DefReg);
+}
+
+
 void PreRARematStage::addToLiveMaps(unsigned RegIdx) {
   const auto [Reg, LiveReg] = getReg(RegIdx);
   std::pair<Register, LaneBitmask> RegAndMask(Reg.getDefReg(), Reg.Mask);
@@ -2196,13 +2219,7 @@ unsigned PreRARematStage::rematerialize(unsigned RootIdx) {
         PostOrderTraversal(Dep.RegIdx);
     }
     RematOrder.push_back(RegIdx);
-
-    // Remove the register from live-in/out lists.
-    Register DefReg = Reg.getDefReg();
-    for (unsigned I : LiveReg.Live.set_bits()) {
-      DAG.LiveIns[I].erase(DefReg);
-      DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I).erase(DefReg);
-    }
+    removeFromLiveMaps(RegIdx);
     LiveReg.Status = RegLiveness::REMATERIALIZED;
   };
   PostOrderTraversal(RootIdx);
@@ -2221,7 +2238,7 @@ unsigned PreRARematStage::rematerialize(unsigned RootIdx) {
     // occupancy we get nothing out of rematerialization if occupancy is not
     // increased in the end; in such cases we want to roll back the
     // rematerialization decision.
-    if (TargetOcc)
+    if (TargetOcc && !DisablePreRARematRollback)
       Rollbacks.push_back(RegIdx);
   }
 

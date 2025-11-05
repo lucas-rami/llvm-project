@@ -275,7 +275,14 @@ private:
   /// Candidate rematerializable registers, mapped to their index in the
   /// underlying \ref Regs vector.
   DenseMap<Register, unsigned> RegToIdx;
-  DenseMap<unsigned, Register> DeadRegs;
+
+  struct DeadRegInfo {
+    Register Reg;
+    SlotIndex Slot;
+
+    DeadRegInfo(Register Reg, SlotIndex Slot) : Reg(Reg), Slot(Slot) {}
+  };
+  DenseMap<unsigned, DeadRegInfo> DeadRegs;
 
   DenseSet<unsigned> LISUpdates;
   DenseSet<Register> UnrematLISUpdates;
@@ -305,10 +312,10 @@ private:
   /// Whether the MI is rematerializable
   bool isReMaterializable(const MachineInstr &MI) const;
 
-  Register reviveDeadReg(unsigned RegIdx) {
-    Register DeadDefReg = DeadRegs.at(RegIdx);
+  DeadRegInfo reviveDeadReg(unsigned RegIdx) {
+    DeadRegInfo DeadInfo = DeadRegs.at(RegIdx);
     DeadRegs.erase(RegIdx);
-    return DeadDefReg;
+    return DeadInfo;
   }
 
   void reMaterializeTo(unsigned NewRegIdx, MachineBasicBlock &MBB,

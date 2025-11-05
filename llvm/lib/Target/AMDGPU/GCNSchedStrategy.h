@@ -622,6 +622,8 @@ private:
                        ArrayRef<GCNRPTarget> RPTargets,
                        SmallVectorImpl<RematCandidate> &Candidates);
 
+  void removeFromLiveMaps(unsigned RegIdx);
+
   void addToLiveMaps(unsigned RegIdx);
 
   unsigned rematerialize(unsigned RootIdx);
