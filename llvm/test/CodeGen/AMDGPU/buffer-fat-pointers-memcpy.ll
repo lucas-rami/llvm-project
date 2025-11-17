@@ -450,8 +450,7 @@ define amdgpu_kernel void @memcpy_known(ptr addrspace(7) %src, ptr addrspace(7) 
 ; GISEL-GFX942-NEXT:    v_add_u32_e32 v63, s12, v0
 ; GISEL-GFX942-NEXT:    v_add_u32_e32 v0, 0x100, v0
 ; GISEL-GFX942-NEXT:    v_cmp_lt_u32_e32 vcc, v0, v1
-; GISEL-GFX942-NEXT:    s_waitcnt vmcnt(0)
-; GISEL-GFX942-NEXT:    scratch_store_dwordx4 off, a[0:3], off ; 16-byte Folded Spill
+; GISEL-GFX942-NEXT:    s_waitcnt vmcnt(15)
 ; GISEL-GFX942-NEXT:    buffer_store_dwordx4 v[2:5], v63, s[4:7], 0 offen
 ; GISEL-GFX942-NEXT:    s_waitcnt vmcnt(15)
 ; GISEL-GFX942-NEXT:    buffer_store_dwordx4 v[6:9], v63, s[4:7], 0 offen offset:16
@@ -992,8 +991,7 @@ define amdgpu_kernel void @memcpy_known_medium(ptr addrspace(7) %src, ptr addrsp
 ; GISEL-GFX942-NEXT:    v_add_u32_e32 v63, s12, v0
 ; GISEL-GFX942-NEXT:    v_add_u32_e32 v0, 0x100, v0
 ; GISEL-GFX942-NEXT:    v_cmp_lt_u32_e32 vcc, v0, v1
-; GISEL-GFX942-NEXT:    s_waitcnt vmcnt(0)
-; GISEL-GFX942-NEXT:    scratch_store_dwordx4 off, a[0:3], off ; 16-byte Folded Spill
+; GISEL-GFX942-NEXT:    s_waitcnt vmcnt(15)
 ; GISEL-GFX942-NEXT:    buffer_store_dwordx4 v[2:5], v63, s[4:7], 0 offen
 ; GISEL-GFX942-NEXT:    s_waitcnt vmcnt(15)
 ; GISEL-GFX942-NEXT:    buffer_store_dwordx4 v[6:9], v63, s[4:7], 0 offen offset:16
