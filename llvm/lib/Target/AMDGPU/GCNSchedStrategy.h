@@ -443,10 +443,6 @@ private:
     /// Subset of \ref Live regions in which the computed RP difference is
     /// approximate.
     BitVector ApproximateDiff;
-    /// Subset of \ref Live regions and \ref ApproximateDiff in which the
-    /// overall effect of rematerializing the register can have a negative
-    /// effect on RP.
-    BitVector Penalized;
     /// Frequency difference between defining and using regions. Negative values
     /// indicate we are rematerializing to higher frequency regions; positive
     /// values indicate the contrary.
@@ -463,28 +459,6 @@ private:
 
     RegLiveness(unsigned RegIdx, PreRARematStage &Stage,
                 bool SkipLiveCheck = false);
-
-    /// Determines whether rematerializing this register may push RP above \p
-    /// RPTargets (or push it further from targets) in any of the regions in \p
-    /// PenalizedRegions.
-    bool maybeDetrimental(const BitVector &PenalizedRegions,
-                          ArrayRef<GCNRPTarget> RPTargets) const;
-
-    /// Determines whether rematerializing this register may help reducing RP
-    /// from above to below \p RPTargets in any of the regions in \p
-    /// TargetRegions.
-    bool maybeBeneficial(const BitVector &TargetRegions,
-                         ArrayRef<GCNRPTarget> RPTargets) const;
-
-    /// Determines if this rematerializable register is both unused and
-    /// live-through in region \p RegionIdx (\p Reg should be the corresponding
-    /// register in the DAG). This guarantees that rematerializing it will
-    /// reduce RP in the region.
-    bool isUnusedLiveThrough(const RematReg &Reg, unsigned RegionIdx) const {
-      assert(RegionIdx < Live.size() && "region index out of range");
-      return LiveIn[RegionIdx] && LiveOut[RegionIdx] &&
-             !Reg.Uses.contains(RegionIdx);
-    }
   };
 
   /// A scored rematerialization candidate. Higher scores indicate more
@@ -493,15 +467,25 @@ private:
   struct RematCandidate {
     /// The register under consideration.
     unsigned RegIdx;
+    /// Subset of register's live regions in which the overall effect of
+    /// rematerializing the register can have a negative effect on RP.
+    BitVector Penalized;
 
     /// This only initializes state-independent characteristics of the score.
-    RematCandidate(unsigned RegIdx, int64_t FreqDiff)
-        : RegIdx(RegIdx), FreqDiff(FreqDiff) {}
+    RematCandidate(unsigned RegIdx, const PreRARematStage &Stage);
 
     /// Updates the rematerialization's score w.r.t. the current \p
     /// TargetRegions and \p RPTargets.
     void update(const BitVector &TargetRegions, ArrayRef<GCNRPTarget> RPTargets,
                 const PreRARematStage &Stage);
+
+    /// Determines whether rematerializing this candidate may push RP above \p
+    /// RPTargets (or push it further from targets) in any of the regions in \p
+    /// PenalizedRegions.
+    bool maybeDetrimental(const BitVector &PenalizedRegions,
+                          const BitVector &TargetRegions,
+                          ArrayRef<GCNRPTarget> RPTargets,
+                          const PreRARematStage &Stage) const;
 
     /// Returns whether the current score is null, indicating the
     /// rematerialization is useless.
@@ -525,13 +509,6 @@ private:
       return RegIdx > O.RegIdx;
     }
 
-    static std::function<bool(unsigned, unsigned)>
-    sortByIndex(ArrayRef<RematCandidate> Candidates) {
-      return [&Candidates](unsigned LHS, unsigned RHS) {
-        return Candidates[LHS] < Candidates[RHS];
-      };
-    }
-
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
     Printable print() const;
 #endif
@@ -551,6 +528,31 @@ private:
     /// Expected number of target regions impacted by the rematerialization,
     /// scaled by the size of the register being rematerialized.
     unsigned RegionImpact;
+  };
+  
+  struct SameRegionCand {
+    /// The register under consideration.
+    unsigned RegIdx;
+    /// RP differenced induced by the candidate.
+    GCNRegPressure RegRP;
+    DenseMap<MachineInstr *, SmallVector<unsigned, 4>> PerUserDeps;
+
+
+    unsigned NumRegs = 0;
+    unsigned NumExtraMIs = 0;
+
+    SameRegionCand(unsigned RegIdx, const PreRARematStage &Stage);
+
+    bool operator<(const SameRegionCand &O) const {
+      // Less extra MIs is better.
+      if (NumExtraMIs != O.NumExtraMIs)
+        return NumExtraMIs > O.NumExtraMIs;
+      // Larger rematerializable register is better.
+      if (NumRegs != O.NumRegs)
+        return NumRegs < O.NumRegs;
+      // Break ties using register index.
+      return RegIdx > O.RegIdx;
+    }
   };
 
   /// Execution frequency information required by scoring heuristics.
@@ -622,6 +624,28 @@ private:
                        ArrayRef<GCNRPTarget> RPTargets,
                        SmallVectorImpl<RematCandidate> &Candidates);
 
+  bool performCrossRegionRemats(BitVector &TargetRegions,
+                                SmallVectorImpl<GCNRPTarget> &RPTargets);
+
+  bool performSameRegionRemats(BitVector &TargetRegions,
+                               SmallVectorImpl<GCNRPTarget> &RPTargets);
+
+  /// Determines if register \p RegIdx is both unused and
+  /// live-through in region \p RegionIdx. This guarantees that rematerializing
+  /// it will reduce RP in the region.
+  bool isUnusedLiveThrough(unsigned RegIdx, unsigned RegionIdx) const {
+    const auto [Reg, LiveReg] = getReg(RegIdx);
+    assert(RegionIdx < LiveReg.Live.size() && "region index out of range");
+    return LiveReg.LiveIn[RegionIdx] && LiveReg.LiveOut[RegionIdx] &&
+           !Reg.Uses.contains(RegionIdx);
+  }
+
+  /// Determines whether rematerializing register \p RegIdx may help reducing RP
+  /// from above to below \p RPTargets in any of the regions in \p
+  /// TargetRegions.
+  bool maybeBeneficial(unsigned RegIdx, const BitVector &TargetRegions,
+                       ArrayRef<GCNRPTarget> RPTargets) const;
+
   void removeFromLiveMaps(unsigned RegIdx);
 
   void addToLiveMaps(unsigned RegIdx);
@@ -636,6 +660,8 @@ private:
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   Printable printChain(unsigned RootIdx) const;
   Printable printReg(unsigned RegIdx) const;
+  Printable printTargetRegions(const BitVector &TargetRegions,
+                               ArrayRef<GCNRPTarget> RPTargets) const;
 #endif
 
 public:

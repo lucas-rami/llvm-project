@@ -74,15 +74,14 @@ struct RematReg {
 
     void eraseUser(MachineInstr *DeletedUser, const LiveIntervals &LIS);
   };
-  /// Uses of the register outside its defining region, mapped by region.
+  /// Uses of the register, mapped by region.
   SmallDenseMap<unsigned, RegionUses, 2> Uses;
-  /// Users of the register inside its defining region.
-  SmallDenseSet<MachineInstr *, 4> DefRegionUsers;
 
   /// Returns the rematerializable register from its defining instruction.
-  /// Illegal to call after rematerializing the register, but legal again
-  /// after rolling back the rematerialization.
-  inline Register getDefReg() const { return DefMI->getOperand(0).getReg(); }
+  inline Register getDefReg() const {
+    assert(DefMI && "register was fully rematerialized");
+    return DefMI->getOperand(0).getReg();
+  }
 
   /// A register read by \ref DefMI which the register depends on to determine
   /// its value.
@@ -98,15 +97,19 @@ struct RematReg {
   SmallVector<Dependency, 2> Dependencies;
   SmallVector<unsigned, 2> UnrematableOprds;
 
-  /// Maps regions in which the register was rematerialized to the register
-  /// index that corresponds to this rematerialization.
-  DenseMap<unsigned, unsigned> Remats;
+  /// Keep track of rematerialized versions of this register, per-region.
+  DenseMap<unsigned, SmallVector<unsigned, 2>> Remats;
+  /// If this register was rematerialized from another one, remember it.
   std::optional<unsigned> Parent;
 
-  inline bool isUsefulToRematerialize() const { return DefMI && !Uses.empty(); }
-
   inline bool isFullyRematerializable() const {
-    return DefMI && DefRegionUsers.empty();
+    return DefMI && !Uses.contains(DefRegion);
+  }
+
+  inline bool isUsefulToRematerialize() const {
+    if (!DefMI || Uses.empty())
+      return false;
+    return Uses.size() > 1 || !Uses.contains(DefRegion);
   }
 
   Printable print(bool SkipRegions = false) const;
@@ -118,6 +121,10 @@ private:
 
   void addUsers(const SmallDenseSet<MachineInstr *, 4> &NewUsers,
                 unsigned Region, const LiveIntervals &LIS);
+
+  MachineBasicBlock::iterator
+  getInsertPos(MachineBasicBlock::iterator InsertPos, unsigned UseRegion,
+               const LiveIntervals &LIS) const;
 
   friend RematDAG;
 };
@@ -242,11 +249,19 @@ public:
 
   unsigned rematerialize(unsigned RootIdx);
 
+  void rematerializeToUse(unsigned RegIdx, MachineInstr *UseMI,
+                          ArrayRef<unsigned> Dependencies);
+
+  unsigned rematerializeInDefRegion(unsigned RegIdx);
+
   void rollback(unsigned RootIdx);
 
   unsigned getRematRegIdx(const MachineInstr &MI) const;
 
   void updateLiveIntervals();
+
+  bool isMOAvailableAtUses(const MachineOperand &MO,
+                           ArrayRef<SlotIndex> Uses) const;
 
   Printable print(unsigned RootIdx) const;
   Printable printID(unsigned RegIdx) const;
@@ -287,13 +302,12 @@ private:
   DenseSet<unsigned> LISUpdates;
   DenseSet<Register> UnrematLISUpdates;
 
-  /// Doesn't create any new register, just moves MIs within RegIdx's defining
-  /// region.
-  bool moveEarlierInDefRegion(unsigned RegIdx,
-                              MachineBasicBlock::iterator InsertPos);
+  unsigned findAndMoveBestRemat(ArrayRef<unsigned> Remats,
+                                MachineBasicBlock::iterator InsertPos);
 
-  Register rematTo(unsigned FromRegIdx, unsigned ToRegIdx, unsigned UseRegion,
-                   MachineBasicBlock::iterator &InsertPos);
+  unsigned createReg(unsigned RegIdx, unsigned UseRegion,
+                     SmallVectorImpl<RematReg::Dependency> &&Dependencies,
+                     MachineBasicBlock::iterator InsertPos);
 
   unsigned rematRegInRegion(unsigned RegIdx, unsigned UseRegion,
                             MachineBasicBlock::iterator InsertPos);
@@ -306,8 +320,8 @@ private:
 
   void substituteDependencies(unsigned FromRegIdx, unsigned ToRegIdx);
 
-  void substituteUserReg(MachineInstr &UserMI, unsigned FromRegIdx,
-                         unsigned ToRegIdx);
+  void substituteUserReg(unsigned FromRegIdx, unsigned ToRegIdx,
+                         MachineInstr &UserMI);
 
   /// Whether the MI is rematerializable
   bool isReMaterializable(const MachineInstr &MI) const;

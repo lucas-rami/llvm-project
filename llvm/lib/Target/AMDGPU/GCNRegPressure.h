@@ -194,6 +194,9 @@ public:
   struct RPDiff {
     GCNRegPressure Pos, Neg;
 
+    RPDiff() = default;
+    RPDiff(const GCNRegPressure& Neg) : Neg(Neg) {}
+
     void inc(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
       Pos.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
     }
@@ -278,6 +281,8 @@ public:
   /// Determines whether applying \p Diff to the current RP will be beneficial
   /// towards achieving the RP target for at least one register kind.
   bool isDiffBeneficial(const RPDiff &Diff) const;
+
+  bool hasDiffInTargetRC(const RPDiff &Diff) const;
 
   unsigned getTotalNetBeneficialSave(const RPDiff &Diff) const;
 

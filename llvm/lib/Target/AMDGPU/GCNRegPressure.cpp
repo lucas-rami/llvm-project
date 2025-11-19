@@ -435,6 +435,20 @@ bool GCNRPTarget::isDiffBeneficial(const RPDiff &Diff) const {
   return false;
 }
 
+bool GCNRPTarget::hasDiffInTargetRC(const RPDiff &Diff) const {
+  if (RP.getSGPRNum() > MaxSGPRs &&
+      (Diff.Pos.getSGPRNum() || Diff.Neg.getSGPRNum()))
+    return true;
+  if (UnifiedRF) {
+    return RP.getVGPRNum(true) > MaxUnifiedVGPRs &&
+           (Diff.Pos.getVGPRNum(true) || Diff.Neg.getVGPRNum(true));
+  }
+  return (RP.getArchVGPRNum() > MaxVGPRs &&
+          (Diff.Pos.getArchVGPRNum() || Diff.Neg.getArchVGPRNum())) ||
+         (RP.getAGPRNum() > MaxVGPRs &&
+          (Diff.Pos.getAGPRNum() || Diff.Neg.getAGPRNum()));
+}
+
 unsigned GCNRPTarget::getTotalNetBeneficialSave(const RPDiff &Diff) const {
   unsigned NetSave = 0;
 
