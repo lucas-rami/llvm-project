@@ -51,8 +51,8 @@ class RematDAG;
 /// rematerializability can in the general case only be determined when
 /// looking at the register through the lens of a chain.
 struct RematReg {
-  /// Single MI defining the rematerializable register. Set to nullptr after
-  /// full rematerialization.
+  /// Single MI defining the rematerializable register. nullptr indicates the
+  /// register was fully rematerialized.
   MachineInstr *DefMI;
   /// Region of \p DefRegion.
   unsigned DefRegion;
@@ -61,14 +61,13 @@ struct RematReg {
 
   /// Represents uses in a particular region.
   struct RegionUses {
-    /// The latest position at which this register can be inserted into the
-    /// region to be available for its uses.
-    MachineBasicBlock::iterator InsertPos;
+    /// The first and last instruction in the region.
+    MachineInstr *FirstMI, *LastMI;
     /// List of existing users in the region.
     SmallDenseSet<MachineInstr *, 4> Users;
 
     RegionUses(MachineInstr *User, const LiveIntervals &LIS)
-        : InsertPos(User), Users({User}) {}
+        : FirstMI(User), LastMI(User), Users({User}) {}
 
     void addUser(MachineInstr *NewUser, const LiveIntervals &LIS);
 
@@ -107,9 +106,11 @@ struct RematReg {
   }
 
   inline bool isUsefulToRematerialize() const {
-    if (!DefMI || Uses.empty())
-      return false;
-    return Uses.size() > 1 || !Uses.contains(DefRegion);
+    return DefMI && hasOutOfRegionUsers();
+  }
+
+  bool hasOutOfRegionUsers() const {
+    return Uses.size() > 1 || (!Uses.empty() && !Uses.contains(DefRegion));
   }
 
   Printable print(bool SkipRegions = false) const;
@@ -230,8 +231,19 @@ public:
   bool build();
 
   inline ArrayRef<RematReg> getRegs() const { return Regs; };
-  inline const RematReg &getReg(unsigned Idx) const { return Regs[Idx]; };
+  inline const RematReg &getReg(unsigned Idx) const {
+    assert(Idx < Regs.size() && "out of bounds");
+    return Regs[Idx];
+  };
   inline unsigned getNumRegs() const { return Regs.size(); };
+
+  inline Register getDefReg(unsigned Idx) const {
+    assert(Idx < Regs.size() && "out of bounds");
+    const RematReg &Reg = getReg(Idx);
+    if (Reg.DefMI)
+      return Reg.getDefReg();
+    return DeadRegs.at(Idx).Reg;
+  }
 
   inline unsigned getRegion(const MachineInstr *MI) const {
     return MIRegion.at(MI);
@@ -249,10 +261,10 @@ public:
 
   unsigned rematerialize(unsigned RootIdx);
 
-  void rematerializeToUse(unsigned RegIdx, MachineInstr *UseMI,
-                          ArrayRef<unsigned> Dependencies);
-
-  unsigned rematerializeInDefRegion(unsigned RegIdx);
+  void rematerializeToUses(unsigned RegIdx,
+                           MachineBasicBlock::iterator InsertPos,
+                           ArrayRef<MachineInstr *> Users,
+                           ArrayRef<unsigned> Dependencies);
 
   void rollback(unsigned RootIdx);
 
@@ -262,6 +274,9 @@ public:
 
   bool isMOAvailableAtUses(const MachineOperand &MO,
                            ArrayRef<SlotIndex> Uses) const;
+
+  bool isDependencyAvailableInUseRegions(unsigned RegIdx,
+                                         unsigned DepIdx) const;
 
   Printable print(unsigned RootIdx) const;
   Printable printID(unsigned RegIdx) const;
@@ -276,8 +291,6 @@ private:
   const TargetRegisterInfo &TRI;
   const TargetInstrInfo &TII;
   bool RegionsTopDown;
-
-  // DAG construction information, cleared at the end of the build process.
 
   /// Maps all MIs (except lone terminators, which are not part of any region)
   /// to their parent region. Non-lone terminators are considered part of the

@@ -217,22 +217,22 @@ unsigned RematDAG::rematerialize(unsigned RootIdx) {
   SmallDenseMap<unsigned, RematReg::RegionUses, 2> Uses(Reg.Uses);
   for (const auto &[UseRegion, RegionUses] : Uses) {
     if (UseRegion != DefRegion)
-      rematRegInRegion(RootIdx, UseRegion, RegionUses.InsertPos);
+      rematRegInRegion(RootIdx, UseRegion, RegionUses.FirstMI);
   }
   return Regs.size() - NumRegsBeforeRemat;
 }
 
-void RematDAG::rematerializeToUse(unsigned RegIdx, MachineInstr *UseMI,
-                                  ArrayRef<unsigned> Dependencies) {
+void RematDAG::rematerializeToUses(unsigned RegIdx,
+                                   MachineBasicBlock::iterator InsertPos,
+                                   ArrayRef<MachineInstr *> Users,
+                                   ArrayRef<unsigned> Dependencies) {
   // Pre-allocate space for the new registers in the vector to avoid invalid
   // references during rematerialization.
   Regs.reserve(Regs.size() + Dependencies.size() + 1);
-  unsigned UseRegion = MIRegion.at(UseMI);
-  assert(Regs[RegIdx].Uses.at(UseRegion).Users.contains(UseMI) && "not a user");
-
+  unsigned UseRegion = MIRegion.at(&*InsertPos);
   LLVM_DEBUG({
     rdbgs() << "Rematerializing " << printID(RegIdx) << " to "
-            << printUser(UseMI) << '\n';
+            << printUser(&*InsertPos) << '\n';
     ++CallDepth;
   });
 
@@ -244,7 +244,7 @@ void RematDAG::rematerializeToUse(unsigned RegIdx, MachineInstr *UseMI,
       unsigned NewDepIdx = DepRemap.lookup_or(Dep.RegIdx, Dep.RegIdx);
       NewDeps.emplace_back(Dep.MOIdx, NewDepIdx);
     }
-    return createReg(RegIdx, UseRegion, std::move(NewDeps), UseMI);
+    return createReg(RegIdx, UseRegion, std::move(NewDeps), InsertPos);
   };
 
   // First rematerialize dependencies (assumed to be in post-order), then the
@@ -254,30 +254,11 @@ void RematDAG::rematerializeToUse(unsigned RegIdx, MachineInstr *UseMI,
     LLVM_DEBUG(rdbgs() << "Rematerialized dependency: " << printID(DepIdx)
                        << " to " << printID(DepRemap.at(DepIdx)) << '\n');
   }
-  substituteUserReg(RegIdx, RematToUse(RegIdx), *UseMI);
+  for (MachineInstr *UseMI : Users)
+    substituteUserReg(RegIdx, RematToUse(RegIdx), *UseMI);
+
   // FIXME: delete any of the original registers if they have no use?
   LLVM_DEBUG(--CallDepth);
-}
-
-unsigned RematDAG::rematerializeInDefRegion(unsigned RegIdx) {
-  return 0;
-  // RematReg &Reg = Regs[RegIdx];
-  // auto DefRegionUses = Reg.Uses.find(Reg.DefRegion);
-  // if (DefRegionUses == Reg.Uses.end() ||
-  //     DefRegionUses->getSecond().Users.size() < 2)
-  //   return 0;
-  // unsigned NumRegsBeforeRemat = Regs.size();
-
-  // // Copy the defining region uses because rematerializing can invalidate
-  // // references to registers.
-  // RematReg::RegionUses DefUses(DefRegionUses->getSecond());
-  // for (MachineInstr *UseMI : DefUses.Users) {
-  //   // The use at the insert position for the region is the earliest one by
-  //   // construction. This one will continue to use the original register.
-  //   if (DefUses.InsertPos != UseMI)
-  //     substituteUserReg(RegIdx, rematToUser(RegIdx, UseMI), *UseMI);
-  // }
-  // return Regs.size() - NumRegsBeforeRemat;
 }
 
 void RematDAG::partiallyRollbackReg(unsigned RegIdx) {
@@ -516,6 +497,20 @@ bool RematDAG::isMOAvailableAtUses(const MachineOperand &MO,
   return true;
 }
 
+bool RematDAG::isDependencyAvailableInUseRegions(unsigned RegIdx,
+                                                 unsigned DepIdx) const {
+  const RematReg &Reg = getReg(RegIdx);
+  for (const RematReg::Dependency Dep : Reg.Dependencies) {
+    const RematReg &DepReg = getReg(Dep.RegIdx);
+    for (const auto &[UseRegion, _] : Reg.Uses) {
+      if (UseRegion != Reg.DefRegion)
+        if (!DepReg.Remats.contains(UseRegion))
+          return false;
+    }
+  }
+  return true;
+}
+
 bool RematDAG::isReMaterializable(const MachineInstr &MI) const {
   if (!TII.isReMaterializable(MI))
     return false;
@@ -590,10 +585,16 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
     if (!isReMaterializable(DefMI))
       continue;
 
+    LLVM_DEBUG(dbgs() << "Evaluating " << printUser(&DefMI) << '\n');
+
     // We only support rematerializing virtual registers with one definition.
     Register DefReg = DefMI.getOperand(0).getReg();
-    if (!DefReg.isVirtual() || !MRI.hasOneDef(DefReg))
+    if (!DefReg.isVirtual() || !MRI.hasOneDef(DefReg)) {
+      LLVM_DEBUG(
+          dbgs()
+          << "  -> Eliminated: non-virtual or more than one definition\n");
       continue;
+    }
 
     const unsigned RegIdx = Regs.size();
 
@@ -604,7 +605,6 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
     unsigned SubIdx = DefMI.getOperand(0).getSubReg();
     Reg.Mask = SubIdx ? TRI.getSubRegIndexLaneMask(SubIdx)
                       : MRI.getMaxLaneMaskForVReg(DefReg);
-    LLVM_DEBUG(dbgs() << "Evaluating " << printUser(&DefMI) << '\n');
 
     // Collect the candidate's direct users, both rematerializable and
     // unrematerializable.
@@ -789,10 +789,8 @@ void RematReg::addUsers(const SmallDenseSet<MachineInstr *, 4> &NewUsers,
 MachineBasicBlock::iterator
 RematReg::getInsertPos(MachineBasicBlock::iterator InsertPos,
                        unsigned UseRegion, const LiveIntervals &LIS) const {
-  // TODO: add defining region case
   if (auto RegionUses = Uses.find(UseRegion); RegionUses != Uses.end()) {
-    MachineBasicBlock::iterator EarliestUser =
-        RegionUses->getSecond().InsertPos;
+    MachineBasicBlock::iterator EarliestUser = RegionUses->getSecond().FirstMI;
     if (LIS.getInstructionIndex(*EarliestUser) <
         LIS.getInstructionIndex(*InsertPos))
       return EarliestUser;
@@ -804,25 +802,33 @@ void RematReg::RegionUses::addUser(MachineInstr *NewUser,
                                    const LiveIntervals &LIS) {
   assert(!Users.empty() && "no region users");
   Users.insert(NewUser);
-  if (LIS.getInstructionIndex(*NewUser) < LIS.getInstructionIndex(*InsertPos))
-    InsertPos = NewUser;
+  SlotIndex UserSlot = LIS.getInstructionIndex(*NewUser);
+  if (UserSlot < LIS.getInstructionIndex(*FirstMI))
+    FirstMI = NewUser;
+  if (LIS.getInstructionIndex(*LastMI) < UserSlot)
+    LastMI = NewUser;
 }
 
 void RematReg::RegionUses::eraseUser(MachineInstr *DeletedUser,
                                      const LiveIntervals &LIS) {
   assert(Users.contains(DeletedUser));
   Users.erase(DeletedUser);
-  SlotIndex IPSlot = LIS.getInstructionIndex(*InsertPos);
-  if (LIS.getInstructionIndex(*DeletedUser) == IPSlot) {
-    // Recompute earliest insert position when the deleted user was the
-    // earliest one.
-    if (!Users.empty()) {
-      auto UsersIt = Users.begin();
-      InsertPos = *UsersIt;
-      for (auto E = Users.end(); UsersIt != E; ++UsersIt)
-        if (LIS.getInstructionIndex(**UsersIt) <
-            LIS.getInstructionIndex(*InsertPos))
-          InsertPos = *UsersIt;
+  if ((FirstMI == DeletedUser || LastMI == DeletedUser) && !Users.empty()) {
+    auto UsersIt = Users.begin();
+    SlotIndex MinSlot = LIS.getInstructionIndex(**UsersIt);
+    SlotIndex MaxSlot = MinSlot;
+    FirstMI = LastMI = *UsersIt;
+
+    for (auto E = Users.end(); UsersIt != E; ++UsersIt) {
+      SlotIndex UserSlot = LIS.getInstructionIndex(**UsersIt);
+      if (UserSlot < MinSlot) {
+        MinSlot = UserSlot;
+        FirstMI = *UsersIt;
+      }
+      if (MaxSlot < UserSlot) {
+        MaxSlot = UserSlot;
+        LastMI = *UsersIt;
+      }
     }
   }
 }

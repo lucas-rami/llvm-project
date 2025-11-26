@@ -421,15 +421,15 @@ bool GCNRPTarget::isSaveBeneficial(Register Reg) const {
   return UnifiedRF && RP.getVGPRNum(true) > MaxUnifiedVGPRs;
 }
 
-bool GCNRPTarget::isDiffBeneficial(const RPDiff &Diff) const {
-  if (Diff.getSGPRNum() < 0 && RP.getSGPRNum() > MaxSGPRs)
+bool GCNRPTarget::isSaveBeneficial(const GCNRegPressure &SaveRP) const {
+  if (SaveRP.getSGPRNum() && RP.getSGPRNum() > MaxSGPRs)
     return true;
-  if (Diff.getArchVGPRNum() < 0 && RP.getArchVGPRNum() > MaxVGPRs)
+  if (SaveRP.getArchVGPRNum() && RP.getArchVGPRNum() > MaxVGPRs)
     return true;
-  if (Diff.getAGPRNum() < 0 && RP.getAGPRNum() > MaxVGPRs)
+  if (SaveRP.getAGPRNum() && RP.getAGPRNum() > MaxVGPRs)
     return true;
   if (UnifiedRF) {
-    if (Diff.getVGPRNum(true) < 0 && RP.getVGPRNum(true) > MaxUnifiedVGPRs)
+    if (SaveRP.getVGPRNum(true) && RP.getVGPRNum(true) > MaxUnifiedVGPRs)
       return true;
   }
   return false;
@@ -494,12 +494,10 @@ bool GCNRPTarget::wouldViolateTarget(const RPDiff &Diff) const {
   return false;
 }
 
-bool GCNRPTarget::satisfied() const {
-  if (RP.getSGPRNum() > MaxSGPRs || RP.getVGPRNum(false) > MaxVGPRs)
+bool GCNRPTarget::satisfied(const GCNRegPressure &TestRP) const {
+  if (TestRP.getSGPRNum() > MaxSGPRs || TestRP.getVGPRNum(false) > MaxVGPRs)
     return false;
-  if (UnifiedRF && RP.getVGPRNum(true) > MaxUnifiedVGPRs)
-    return false;
-  return true;
+  return !UnifiedRF || TestRP.getVGPRNum(true) <= MaxUnifiedVGPRs;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

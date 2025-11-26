@@ -31,9 +31,7 @@ class SlotIndex;
 struct GCNRegPressure {
   enum RegKind { SGPR, VGPR, AGPR, AVGPR, TOTAL_KINDS };
 
-  GCNRegPressure() {
-    clear();
-  }
+  GCNRegPressure() { clear(); }
 
   GCNRegPressure(unsigned NumSGPRs, unsigned NumArchVGPRs, unsigned NumAGPRs,
                  unsigned NumAVGPRs) {
@@ -99,9 +97,7 @@ struct GCNRegPressure {
                                                 DynamicVGPRBlockSize));
   }
 
-  void inc(unsigned Reg,
-           LaneBitmask PrevMask,
-           LaneBitmask NewMask,
+  void inc(unsigned Reg, LaneBitmask PrevMask, LaneBitmask NewMask,
            const MachineRegisterInfo &MRI);
 
   bool higherOccupancy(const GCNSubtarget &ST, const GCNRegPressure &O,
@@ -129,9 +125,7 @@ struct GCNRegPressure {
     return std::equal(&Value[0], &Value[ValueArraySize], O.Value);
   }
 
-  bool operator!=(const GCNRegPressure &O) const {
-    return !(*this == O);
-  }
+  bool operator!=(const GCNRegPressure &O) const { return !(*this == O); }
 
   GCNRegPressure &operator+=(const GCNRegPressure &RHS) {
     for (unsigned I = 0; I < ValueArraySize; ++I)
@@ -154,8 +148,7 @@ private:
   /// all tuple register kinds).
   unsigned Value[ValueArraySize];
 
-  friend GCNRegPressure max(const GCNRegPressure &P1,
-                            const GCNRegPressure &P2);
+  friend GCNRegPressure max(const GCNRegPressure &P1, const GCNRegPressure &P2);
 
   friend Printable print(const GCNRegPressure &RP, const GCNSubtarget *ST,
                          unsigned DynamicVGPRBlockSize);
@@ -195,7 +188,12 @@ public:
     GCNRegPressure Pos, Neg;
 
     RPDiff() = default;
-    RPDiff(const GCNRegPressure& Neg) : Neg(Neg) {}
+    RPDiff(const GCNRegPressure &RP, bool NegPressure) {
+      if (NegPressure)
+        Neg = RP;
+      else
+        Pos = RP;
+    }
 
     void inc(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
       Pos.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
@@ -226,6 +224,21 @@ public:
       return *this;
     }
 
+    RPDiff &operator+=(const GCNRegPressure &RHS) {
+      Pos += RHS;
+      return *this;
+    }
+
+    RPDiff &operator-=(const RPDiff &RHS) {
+      Pos -= RHS.Pos;
+      Neg -= RHS.Neg;
+      return *this;
+    }
+
+    RPDiff &operator-=(const GCNRegPressure &RHS) {
+      Neg += RHS;
+      return *this;
+    }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
     friend raw_ostream &operator<<(raw_ostream &OS, const RPDiff &Diff) {
@@ -277,10 +290,10 @@ public:
   /// Determines whether saving virtual register \p Reg will be beneficial
   /// towards achieving the RP target.
   bool isSaveBeneficial(Register Reg) const;
-
+  
   /// Determines whether applying \p Diff to the current RP will be beneficial
   /// towards achieving the RP target for at least one register kind.
-  bool isDiffBeneficial(const RPDiff &Diff) const;
+  bool isSaveBeneficial(const GCNRegPressure& SaveRP) const;
 
   bool hasDiffInTargetRC(const RPDiff &Diff) const;
 
@@ -295,7 +308,9 @@ public:
   void addReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
     RP.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
   }
-  
+
+  void saveRP(const GCNRegPressure &SaveRP) { RP -= SaveRP; }
+
   /// Applies \p Diff to the current RP.
   void applyDiff(const RPDiff &Diff) {
     RP += Diff.Pos;
@@ -307,7 +322,10 @@ public:
   bool wouldViolateTarget(const RPDiff &Diff) const;
 
   /// Whether the current RP is at or below the defined pressure target.
-  bool satisfied() const;
+  bool satisfied() const { return satisfied(RP); }
+
+  /// Whether the provided RP is at or below the defined pressure target.
+  bool satisfied(const GCNRegPressure &TestRP) const;
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   friend raw_ostream &operator<<(raw_ostream &OS, const GCNRPTarget &Target) {
@@ -379,9 +397,7 @@ public:
 
   GCNRegPressure getPressure() const { return CurPressure; }
 
-  decltype(LiveRegs) moveLiveRegs() {
-    return std::move(LiveRegs);
-  }
+  decltype(LiveRegs) moveLiveRegs() { return std::move(LiveRegs); }
 };
 
 GCNRPTracker::LiveRegSet getLiveRegs(SlotIndex SI, const LiveIntervals &LIS,
@@ -527,7 +543,7 @@ GCNRPTracker::LiveRegSet getLiveRegs(SlotIndex SI, const LiveIntervals &LIS,
 /// Note: there is no entry in the map for instructions with empty live reg set
 /// Complexity = O(NumVirtRegs * averageLiveRangeSegmentsPerReg * lg(R))
 template <typename Range>
-DenseMap<MachineInstr*, GCNRPTracker::LiveRegSet>
+DenseMap<MachineInstr *, GCNRPTracker::LiveRegSet>
 getLiveRegMap(Range &&R, bool After, LiveIntervals &LIS) {
   std::vector<SlotIndex> Indexes;
   Indexes.reserve(std::distance(R.begin(), R.end()));
