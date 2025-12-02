@@ -290,10 +290,10 @@ public:
   /// Determines whether saving virtual register \p Reg will be beneficial
   /// towards achieving the RP target.
   bool isSaveBeneficial(Register Reg) const;
-  
+
   /// Determines whether applying \p Diff to the current RP will be beneficial
   /// towards achieving the RP target for at least one register kind.
-  bool isSaveBeneficial(const GCNRegPressure& SaveRP) const;
+  bool isSaveBeneficial(const GCNRegPressure &SaveRP) const;
 
   bool hasDiffInTargetRC(const RPDiff &Diff) const;
 
@@ -326,6 +326,8 @@ public:
 
   /// Whether the provided RP is at or below the defined pressure target.
   bool satisfied(const GCNRegPressure &TestRP) const;
+
+  unsigned getMaxUnifiedVGPRs() const { return MaxUnifiedVGPRs; }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   friend raw_ostream &operator<<(raw_ostream &OS, const GCNRPTarget &Target) {
@@ -396,6 +398,7 @@ public:
   void clearMaxPressure() { MaxPressure.clear(); }
 
   GCNRegPressure getPressure() const { return CurPressure; }
+  const GCNRegPressure &getMaxPressure() const { return MaxPressure; }
 
   decltype(LiveRegs) moveLiveRegs() { return std::move(LiveRegs); }
 };

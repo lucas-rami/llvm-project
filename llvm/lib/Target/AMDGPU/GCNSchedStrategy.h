@@ -444,22 +444,50 @@ private:
   struct RegionsInfo {
     /// Regions which are above the stage's RP target (anywhere, at live-ins, or
     /// at live-outs).
-    BitVector TargetRegions, TargetLiveIn, TargetLiveOut;
+    BitVector TargetRegions;
     /// RP targets for all regions.
     SmallVector<GCNRPTarget> RPTargets;
-    /// Marks slots inside the region at which RP goes from below target to
-    /// above target (or the other way around).
-    DenseMap<unsigned, SmallVector<SlotIndex, 4>> TargetSlots;
+    /// For each region, ranges of instructions (identified by their slot)
+    /// inside the region that have RP above target. The list of ranges is
+    /// non-empty only for target regions.
+    SmallVector<SmallVector<std::pair<SlotIndex, SlotIndex>, 4>> RegionRanges;
 
-    RegionsInfo(unsigned NumRegions)
-        : TargetRegions(NumRegions), TargetLiveIn(NumRegions),
-          TargetLiveOut(NumRegions) {}
+    RegionsInfo(unsigned NumRegions) : TargetRegions(NumRegions) {
+      RPTargets.reserve(NumRegions);
+      RegionRanges.reserve(NumRegions);
+    }
+
+    bool satisfiedAtLiveIn(unsigned I) const {
+      return RegionRanges[I].empty() ||
+             RegionRanges[I].front().first != getBoundSlot();
+    }
+
+    bool satisfiedAtLiveOut(unsigned I) const {
+      return RegionRanges[I].empty() ||
+             RegionRanges[I].back().second != getBoundSlot();
+    }
+
+    bool slotInTargetRange(unsigned I, SlotIndex Slot) const {
+      for (const auto &[Begin, End] : getTargetRanges(I)) {
+        if ((Begin == RegionsInfo::getBoundSlot() || Slot >= Begin) &&
+            (End == RegionsInfo::getBoundSlot() || Slot <= End))
+          return true;
+      }
+      return false;
+    }
+
+    ArrayRef<std::pair<SlotIndex, SlotIndex>>
+    getTargetRanges(unsigned I) const {
+      return RegionRanges[I];
+    }
 
     /// Determines and returns what should be the stage's objective. An actual
     /// number means we aim for an occupancy above the minimum occupancy target
     /// set for the current machine function; nullopt indicates we just aim to
     /// reach the minimum occupancy target.
-    std::optional<unsigned> determineObjective(const GCNScheduleDAGMILive &DAG);
+    std::optional<unsigned> determineObjective(unsigned SGPRBias,
+                                               unsigned VGPRBias,
+                                               const GCNScheduleDAGMILive &DAG);
 
     /// Clears target regions in \p Regions whose RP target has been reached.
     void clearIfSatisfied(const BitVector &Regions);
@@ -468,14 +496,16 @@ private:
     /// sets again all target regions that were optimistically marked as
     /// satisfied but are actually not, and returns whether there were any such
     /// regions.
-    bool updateAndVerify(const BitVector &Regions,
-                         const GCNScheduleDAGMILive &DAG);
-
-    void calculatePressureInfo(unsigned I, const GCNScheduleDAGMILive &DAG);
+    bool verify(const BitVector &Regions, const GCNScheduleDAGMILive &DAG);
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
     Printable print() const;
 #endif
+
+  private:
+    static SlotIndex getBoundSlot() { return SlotIndex(nullptr, 0); }
+
+    void calculateRanges(unsigned I, const GCNScheduleDAGMILive &DAG);
   };
 
   /// Execution frequency information required by scoring heuristics.
@@ -504,6 +534,8 @@ private:
     BitVector ApproximateDiff;
     /// RP save induced by rematerializing this register.
     GCNRegPressure Save;
+    /// Register dependencies.
+    SmallDenseSet<unsigned, 4> TransDependencies;
 
     /// The register's current candidate status. This starts at INVALID and from
     /// there can go to ROOT or NON_ROOT when in a candidate identification
@@ -520,7 +552,7 @@ private:
   /// A scored rematerialization candidate. Higher scores indicate more
   /// beneficial rematerializations. A null score indicate the rematerialization
   /// is not helpful to reduce RP in target regions.
-  struct RematCandidate {
+  struct InterRegionCand {
     /// The register under consideration.
     unsigned RootIdx;
 
@@ -530,13 +562,14 @@ private:
     };
     DenseMap<unsigned, RematInfo> Remats;
 
-    RematCandidate(unsigned RootIdx, const RematDAG &RDAG,
-                   const MachineRegisterInfo &MRI);
+    InterRegionCand(unsigned RootIdx, ArrayRef<RegLiveness> LiveRegs,
+                    const RematDAG &RDAG, const MachineRegisterInfo &MRI);
 
     /// Updates the rematerialization's score w.r.t. the current \p
     /// TargetRegions and \p RPTargets.
     void update(const RegionsInfo &RI, const FreqInfo &FI,
-                const PreRARematStage &Stage);
+                ArrayRef<RegLiveness> LiveRegs, const GCNScheduleDAGMILive &DAG,
+                const RematDAG &RDAG, bool ReduceSpill);
 
     /// Determines whether rematerializing this candidate may push RP above
     /// target in any of the regions in which the candidate may have a negative
@@ -552,7 +585,7 @@ private:
     /// For each pair of candidates the most important scoring component with
     /// non-equal values determine the result of the comparison (higher is
     /// better).
-    bool operator<(const RematCandidate &O) const {
+    bool operator<(const InterRegionCand &O) const {
       if (hasNullScore())
         return true;
       if (O.hasNullScore())
@@ -589,34 +622,17 @@ private:
     unsigned RegionImpact;
   };
 
-  struct SameRegionCand {
-    /// The register under consideration.
-    unsigned RegIdx;
-    /// RP differenced induced by the candidate.
-    GCNRegPressure RP;
+  template <typename T> struct CandPtr {
+    CandPtr(T *Ptr) : Ptr(Ptr) {}
+    bool operator<(const CandPtr &O) const { return *Ptr < *O.Ptr; }
+    T &operator*() { return *Ptr; }
+    const T &operator*() const { return *Ptr; }
 
-    SmallVector<SmallVector<MachineInstr *, 4>, 2> RematGroups;
-    MachineBasicBlock::iterator InsertPos;
-    SmallVector<MachineInstr *> RemainingUsers;
-
-    // Size of the register being rematerialized.
-    unsigned NumRegs = 0;
-
-    SameRegionCand(unsigned RegIdx, const PreRARematStage &Stage);
-
-    bool operator<(const SameRegionCand &O) const {
-      // Less extra MIs is better.
-      if (RematGroups.size() != O.RematGroups.size())
-        return RematGroups.size() > O.RematGroups.size();
-      // Larger rematerializable register is better.
-      if (NumRegs != O.NumRegs)
-        return NumRegs < O.NumRegs;
-      // Break ties using register index.
-      return RegIdx > O.RegIdx;
-    }
+  private:
+    T *const Ptr;
   };
 
-  /// The target occupancy the set is trying to achieve. Empty when the
+  /// The target occupancy the stage is trying to achieve. Empty when the
   /// objective is spilling reduction.
   std::optional<unsigned> TargetOcc;
   /// Achieved occupancy *only* through rematerializations (pre-rescheduling).
@@ -626,8 +642,8 @@ private:
   /// Rematerialization DAG.
   RematDAG RDAG;
   /// Liveness information for rematerializable registers, in the same order as
-  /// in \ref RDAG.
-  SmallVector<RegLiveness, 4> RematRegs;
+  /// the registers in \ref RDAG.
+  SmallVector<RegLiveness, 4> LiveRegs;
   /// List of rematerialization decisions to rollback if the stage does not end
   /// up being beneficial.
   SmallVector<unsigned> Rollbacks;
@@ -635,21 +651,15 @@ private:
   /// rescheduled.
   BitVector RescheduleRegions;
 
-  inline std::pair<const RematReg &, const RegLiveness &>
-  getReg(unsigned RegIdx) const {
-    return {RDAG.getReg(RegIdx), RematRegs[RegIdx]};
-  }
-
-  inline std::pair<const RematReg &, RegLiveness &> getReg(unsigned RegIdx) {
-    return {RDAG.getReg(RegIdx), RematRegs[RegIdx]};
-  }
+  void buildChainAtRegUsers(unsigned RegIdx, const RegionsInfo &RI,
+                            SmallVectorImpl<InterRegionCand> &Candidates);
 
   bool buildChainAtReg(unsigned RegIdx, const RegionsInfo &RI,
-                       SmallVectorImpl<RematCandidate> &Candidates);
+                       SmallVectorImpl<InterRegionCand> &Candidates);
 
-  bool performCrossRegionRemats(RegionsInfo &RI);
+  bool performInterRegionRemats(RegionsInfo &RI);
 
-  bool performSameRegionRemats(RegionsInfo &RI);
+  bool performIntraRegionRemats(RegionsInfo &RI);
 
   /// Determines whether rematerializing register \p RegIdx may help reducing RP
   /// in target regions.

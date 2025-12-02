@@ -88,6 +88,10 @@ struct RematReg {
     unsigned MOIdx;
     unsigned RegIdx;
 
+    static constexpr unsigned NoReg = ~0;
+
+    Dependency(unsigned MOIdx) : MOIdx(MOIdx), RegIdx(NoReg) {}
+
     Dependency(unsigned MOIdx, unsigned RegIdx)
         : MOIdx(MOIdx), RegIdx(RegIdx) {}
   };
@@ -130,89 +134,89 @@ private:
   friend RematDAG;
 };
 
-class ChainIterator {
-  const ArrayRef<RematReg> Regs;
+// class ChainIterator {
+//   const ArrayRef<RematReg> Regs;
 
-  SmallDenseSet<unsigned, 4> Visited;
-  SmallVector<std::pair<unsigned, int>> Path;
-  unsigned RegIdx;
+//   SmallDenseSet<unsigned, 4> Visited;
+//   SmallVector<std::pair<unsigned, int>> Path;
+//   unsigned RegIdx;
 
-  void advance() {
-    assert((Path.size() > 1 || Path.front().second != -1) &&
-           "trying to advance past end");
-    if (Path.back().second == -1)
-      Path.pop_back();
-    nextInPreOrder();
-  }
+//   void advance() {
+//     assert((Path.size() > 1 || Path.front().second != -1) &&
+//            "trying to advance past end");
+//     if (Path.back().second == -1)
+//       Path.pop_back();
+//     nextInPreOrder();
+//   }
 
-  void nextInPreOrder() {
-    // Move "vertically" in the DAG to the deepest dependency that hasn't
-    // been visited yet.
-    while (true) {
-      RegIdx = Path.back().first;
-      int &DepIdx = Path.back().second;
-      const RematReg &Reg = Regs[RegIdx];
-      int NumDeps = Reg.Dependencies.size();
-      // Move "horizontally" in the DAG through the dependencies until we find
-      // one that is part of the chain and hasn't been visited yet.
-      for (; DepIdx < NumDeps; ++DepIdx) {
-        if (Visited.insert(DepIdx).second)
-          break;
-      }
-      if (DepIdx == NumDeps) {
-        DepIdx = -1;
-        return;
-      }
-      Path.push_back({DepIdx, 0});
-    }
-  }
+//   void nextInPreOrder() {
+//     // Move "vertically" in the DAG to the deepest dependency that hasn't
+//     // been visited yet.
+//     while (true) {
+//       RegIdx = Path.back().first;
+//       int &DepIdx = Path.back().second;
+//       const RematReg &Reg = Regs[RegIdx];
+//       int NumDeps = Reg.Dependencies.size();
+//       // Move "horizontally" in the DAG through the dependencies until we find
+//       // one that is part of the chain and hasn't been visited yet.
+//       for (; DepIdx < NumDeps; ++DepIdx) {
+//         if (Visited.insert(DepIdx).second)
+//           break;
+//       }
+//       if (DepIdx == NumDeps) {
+//         DepIdx = -1;
+//         return;
+//       }
+//       Path.push_back({DepIdx, 0});
+//     }
+//   }
 
-public:
-  using iterator_category = std::forward_iterator_tag;
-  using difference_type = std::ptrdiff_t;
-  using value_type = unsigned;
-  using pointer = const value_type *;
-  using reference = value_type;
+// public:
+//   using iterator_category = std::forward_iterator_tag;
+//   using difference_type = std::ptrdiff_t;
+//   using value_type = unsigned;
+//   using pointer = const value_type *;
+//   using reference = value_type;
 
-  ChainIterator(unsigned RootIdx, ArrayRef<RematReg> Regs)
-      : Regs(Regs), RegIdx(RootIdx) {
-    Path.push_back({RootIdx, 0});
-    nextInPreOrder();
-  }
+//   ChainIterator(unsigned RootIdx, ArrayRef<RematReg> Regs)
+//       : Regs(Regs), RegIdx(RootIdx) {
+//     Path.push_back({RootIdx, 0});
+//     nextInPreOrder();
+//   }
 
-  ChainIterator(unsigned RootIdx) : Regs({}), RegIdx(RootIdx) {
-    Path.push_back({RootIdx, -1});
-  }
+//   ChainIterator(unsigned RootIdx) : Regs({}), RegIdx(RootIdx) {
+//     Path.push_back({RootIdx, -1});
+//   }
 
-  ChainIterator(const ChainIterator &) = default;
+//   ChainIterator(const ChainIterator &) = default;
 
-  ChainIterator operator++(int) {
-    auto Prev = *this;
-    advance();
-    return Prev;
-  }
+//   ChainIterator operator++(int) {
+//     auto Prev = *this;
+//     advance();
+//     return Prev;
+//   }
 
-  ChainIterator &operator++() {
-    advance();
-    return *this;
-  }
+//   ChainIterator &operator++() {
+//     advance();
+//     return *this;
+//   }
 
-  unsigned operator*() const { return RegIdx; }
+//   unsigned operator*() const { return RegIdx; }
 
-  bool operator==(const ChainIterator &Other) const {
-    if (RegIdx != Other.RegIdx || Path.size() != Other.Path.size())
-      return false;
-    for (const auto &[Node, OtherNode] : zip_equal(Path, Other.Path)) {
-      if (Node != OtherNode)
-        return false;
-    }
-    return true;
-  }
+//   bool operator==(const ChainIterator &Other) const {
+//     if (RegIdx != Other.RegIdx || Path.size() != Other.Path.size())
+//       return false;
+//     for (const auto &[Node, OtherNode] : zip_equal(Path, Other.Path)) {
+//       if (Node != OtherNode)
+//         return false;
+//     }
+//     return true;
+//   }
 
-  bool operator!=(const ChainIterator &Other) const {
-    return !(*this == Other);
-  }
-};
+//   bool operator!=(const ChainIterator &Other) const {
+//     return !(*this == Other);
+//   }
+// };
 
 /// This only supports rematerializing registers that meet all of the
 /// following constraints.
@@ -249,15 +253,15 @@ public:
     return MIRegion.at(MI);
   }
 
-  ChainIterator chainBegin(unsigned RootIdx) const {
-    return ChainIterator(RootIdx, Regs);
-  }
-  ChainIterator chainEnd(unsigned RootIdx) const {
-    return ChainIterator(RootIdx);
-  }
-  iterator_range<ChainIterator> getChain(unsigned RootIdx) const {
-    return make_range(chainBegin(RootIdx), chainEnd(RootIdx));
-  }
+  // ChainIterator chainBegin(unsigned RootIdx) const {
+  //   return ChainIterator(RootIdx, Regs);
+  // }
+  // ChainIterator chainEnd(unsigned RootIdx) const {
+  //   return ChainIterator(RootIdx);
+  // }
+  // iterator_range<ChainIterator> getChain(unsigned RootIdx) const {
+  //   return make_range(chainBegin(RootIdx), chainEnd(RootIdx));
+  // }
 
   unsigned rematerialize(unsigned RootIdx);
 
@@ -274,6 +278,9 @@ public:
 
   bool isMOAvailableAtUses(const MachineOperand &MO,
                            ArrayRef<SlotIndex> Uses) const;
+
+  bool areUnrematOprdsAvailableAtUses(unsigned RegIdx,
+                                      ArrayRef<SlotIndex> Uses) const;
 
   bool isDependencyAvailableInUseRegions(unsigned RegIdx,
                                          unsigned DepIdx) const;
