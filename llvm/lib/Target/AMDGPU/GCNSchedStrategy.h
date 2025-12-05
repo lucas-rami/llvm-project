@@ -490,7 +490,8 @@ private:
                                                const GCNScheduleDAGMILive &DAG);
 
     /// Clears target regions in \p Regions whose RP target has been reached.
-    void clearIfSatisfied(const BitVector &Regions);
+    /// Returns whether any target region was cleared.
+    bool clearIfSatisfied(const BitVector &Regions);
 
     /// Fully recomputes RP from the DAG in \p Regions. Among those regions,
     /// sets again all target regions that were optimistically marked as
@@ -534,16 +535,6 @@ private:
     BitVector ApproximateDiff;
     /// RP save induced by rematerializing this register.
     GCNRegPressure Save;
-    /// Register dependencies.
-    SmallDenseSet<unsigned, 4> TransDependencies;
-
-    /// The register's current candidate status. This starts at INVALID and from
-    /// there can go to ROOT or NON_ROOT when in a candidate identification
-    /// phase. The transition from ROOT to NON_ROOT is also possible after a
-    /// candidate that was initially thought to be beneficial turns out to be
-    /// usesless to rematerialize on its own. The opposite transition does not
-    /// happen i.e., a non-root never turns into a root.
-    enum { INVALID, ROOT, NON_ROOT } Status = INVALID;
 
     RegLiveness(unsigned RegIdx, const GCNScheduleDAGMILive &DAG,
                 const RematDAG &RDAG, bool SkipLiveCheck = false);
@@ -553,30 +544,39 @@ private:
   /// beneficial rematerializations. A null score indicate the rematerialization
   /// is not helpful to reduce RP in target regions.
   struct InterRegionCand {
-    /// The register under consideration.
+    /// The root register of the chain.
     unsigned RootIdx;
 
-    struct RematInfo {
-      SmallDenseSet<unsigned, 4> Dependencies;
-      GCNRegPressure RPInc;
-    };
-    DenseMap<unsigned, RematInfo> Remats;
+    DenseMap<unsigned, RematDAG::DependencyData> Remats;
 
-    InterRegionCand(unsigned RootIdx, ArrayRef<RegLiveness> LiveRegs,
-                    const RematDAG &RDAG, const MachineRegisterInfo &MRI);
+    InterRegionCand(unsigned RootIdx) : RootIdx(RootIdx) {}
 
-    /// Updates the rematerialization's score w.r.t. the current \p
-    /// TargetRegions and \p RPTargets.
-    void update(const RegionsInfo &RI, const FreqInfo &FI,
-                ArrayRef<RegLiveness> LiveRegs, const GCNScheduleDAGMILive &DAG,
-                const RematDAG &RDAG, bool ReduceSpill);
+    void rematerialize(const GCNScheduleDAGMILive &DAG, RematDAG &RDAG);
 
-    /// Determines whether rematerializing this candidate may push RP above
-    /// target in any of the regions in which the candidate may have a negative
-    /// impact.
-    bool maybeDetrimental(const RegionsInfo &RI,
-                          const GCNScheduleDAGMILive &DAG,
-                          const RematDAG &RDAG) const;
+    bool checkRematerializability(const RematDAG &RDAG,
+                                  const LiveIntervals &LIS);
+
+    /// Updates the rematerialization's score w.r.t. to the current stage's
+    /// state.
+    void updateScore(const RegionsInfo &RI, const FreqInfo &FI,
+                     ArrayRef<RegLiveness> LiveRegs,
+                     const GCNScheduleDAGMILive &DAG, const RematDAG &RDAG,
+                     bool ReduceSpill);
+
+    /// Determines whether rematerializing register \p RegIdx may help reducing
+    /// RP in target regions.
+    bool maybeBeneficial(const RegionsInfo &RI, ArrayRef<RegLiveness> LiveRegs,
+                         const RematDAG &RDAG, const LiveIntervals &LIS) const;
+
+    /// Determines whether it is possible/desirable to rematerialize this
+    /// register chain *now*. Other rematerializations generally invalidate this
+    /// check.
+    bool preRematChecks(const RegionsInfo &RI, const GCNScheduleDAGMILive &DAG,
+                        const RematDAG &RDAG,
+                        const DenseSet<unsigned> &ChangedUsers,
+                        const DenseSet<unsigned> &NewRemats) const;
+
+    bool isDead() const { return Remats.empty(); }
 
     /// Returns whether the current score is null, indicating the
     /// rematerialization is useless.
@@ -601,7 +601,7 @@ private:
     }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
-    Printable print() const;
+    Printable print(const RematDAG &RDAG) const;
 #endif
 
   private:
@@ -620,6 +620,10 @@ private:
     /// scaled by the size of the register being rematerialized. Higher is
     /// better.
     unsigned RegionImpact;
+
+    bool checkRematerializabilityTo(unsigned UseRegion, SlotIndex Use,
+                                    const RematDAG &RDAG,
+                                    const LiveIntervals &LIS);
   };
 
   template <typename T> struct CandPtr {
@@ -644,6 +648,9 @@ private:
   /// Liveness information for rematerializable registers, in the same order as
   /// the registers in \ref RDAG.
   SmallVector<RegLiveness, 4> LiveRegs;
+
+  DenseSet<unsigned> RegionLocalRegs;
+
   /// List of rematerialization decisions to rollback if the stage does not end
   /// up being beneficial.
   SmallVector<unsigned> Rollbacks;
@@ -651,19 +658,9 @@ private:
   /// rescheduled.
   BitVector RescheduleRegions;
 
-  void buildChainAtRegUsers(unsigned RegIdx, const RegionsInfo &RI,
-                            SmallVectorImpl<InterRegionCand> &Candidates);
-
-  bool buildChainAtReg(unsigned RegIdx, const RegionsInfo &RI,
-                       SmallVectorImpl<InterRegionCand> &Candidates);
-
   bool performInterRegionRemats(RegionsInfo &RI);
 
   bool performIntraRegionRemats(RegionsInfo &RI);
-
-  /// Determines whether rematerializing register \p RegIdx may help reducing RP
-  /// in target regions.
-  bool maybeBeneficial(unsigned RegIdx, const RegionsInfo &RI) const;
 
   void removeFromLiveMaps(unsigned RegIdx);
 
@@ -677,7 +674,6 @@ private:
   void finalizeGCNSchedStage() override;
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
-  Printable printChain(unsigned RootIdx) const;
   Printable printReg(unsigned RegIdx) const;
 #endif
 

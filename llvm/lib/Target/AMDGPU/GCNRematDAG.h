@@ -88,10 +88,6 @@ struct RematReg {
     unsigned MOIdx;
     unsigned RegIdx;
 
-    static constexpr unsigned NoReg = ~0;
-
-    Dependency(unsigned MOIdx) : MOIdx(MOIdx), RegIdx(NoReg) {}
-
     Dependency(unsigned MOIdx, unsigned RegIdx)
         : MOIdx(MOIdx), RegIdx(RegIdx) {}
   };
@@ -157,7 +153,8 @@ private:
 //       int &DepIdx = Path.back().second;
 //       const RematReg &Reg = Regs[RegIdx];
 //       int NumDeps = Reg.Dependencies.size();
-//       // Move "horizontally" in the DAG through the dependencies until we find
+//       // Move "horizontally" in the DAG through the dependencies until we
+//       find
 //       // one that is part of the chain and hasn't been visited yet.
 //       for (; DepIdx < NumDeps; ++DepIdx) {
 //         if (Visited.insert(DepIdx).second)
@@ -224,6 +221,7 @@ private:
 /// 2. The single defining instruction is either deemed rematerializable by the
 ///    target-independent logic, or if not, has no non-constant and
 ///    non-ignorable physical register use.
+/// 3. The register has at least one non-debug use.
 class RematDAG {
 public:
   RematDAG(SmallVectorImpl<RegionBoundaries> &Regions, bool RegionsTopDown,
@@ -265,16 +263,23 @@ public:
 
   unsigned rematerialize(unsigned RootIdx);
 
-  void rematerializeToUses(unsigned RegIdx,
-                           MachineBasicBlock::iterator InsertPos,
-                           ArrayRef<MachineInstr *> Users,
-                           ArrayRef<unsigned> Dependencies);
+  struct DependencyData {
+    SmallDenseSet<unsigned, 4> Dependencies;
+    SmallDenseMap<unsigned, unsigned, 4> DepMap;
+  };
+
+  unsigned rematerializeToRegion(unsigned RootIdx, unsigned UseRegion,
+                                 DependencyData &DD);
+
+  void rematerializeToPos(unsigned RootIdx,
+                          MachineBasicBlock::iterator InsertPos,
+                          DependencyData &DD);
 
   void rollback(unsigned RootIdx);
 
   unsigned getRematRegIdx(const MachineInstr &MI) const;
 
-  void updateLiveIntervals();
+  void updateLiveIntervals(bool UpdateUnrematable = true);
 
   bool isMOAvailableAtUses(const MachineOperand &MO,
                            ArrayRef<SlotIndex> Uses) const;
@@ -284,6 +289,11 @@ public:
 
   bool isDependencyAvailableInUseRegions(unsigned RegIdx,
                                          unsigned DepIdx) const;
+
+  static constexpr unsigned NoReg = ~0;
+
+  unsigned findAvailableRematInRegion(unsigned RegIdx, unsigned Region,
+                                      SlotIndex AvailableAt) const;
 
   Printable print(unsigned RootIdx) const;
   Printable printID(unsigned RegIdx) const;
@@ -352,9 +362,9 @@ private:
     return DeadInfo;
   }
 
-  void reMaterializeTo(unsigned NewRegIdx, MachineBasicBlock &MBB,
-                       MachineBasicBlock::iterator InsertPos, Register NewReg,
-                       MachineInstr &OrigMI) {
+  void remat(unsigned NewRegIdx, MachineBasicBlock &MBB,
+             MachineBasicBlock::iterator InsertPos, Register NewReg,
+             MachineInstr &OrigMI) {
     TII.reMaterialize(MBB, InsertPos, NewReg, 0, OrigMI, TRI);
     RematReg &Reg = Regs[NewRegIdx];
     Reg.DefMI = &*std::prev(InsertPos);
