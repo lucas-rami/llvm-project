@@ -184,85 +184,6 @@ inline GCNRegPressure operator-(const GCNRegPressure &P1,
 /// savings against that target from a starting \ref GCNRegPressure.
 class GCNRPTarget {
 public:
-  struct RPDiff {
-    GCNRegPressure Pos, Neg;
-
-    RPDiff() = default;
-    RPDiff(const GCNRegPressure &RP, bool NegPressure) {
-      if (NegPressure)
-        Neg = RP;
-      else
-        Pos = RP;
-    }
-
-    void inc(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
-      Pos.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
-    }
-
-    void dec(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
-      Neg.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
-    }
-
-    int getSGPRNum() const { return Pos.getSGPRNum() - Neg.getSGPRNum(); }
-    int getVGPRNum(bool UnifiedVGPRFile) const {
-      return Pos.getVGPRNum(UnifiedVGPRFile) - Neg.getVGPRNum(UnifiedVGPRFile);
-    }
-    int getArchVGPRNum() const {
-      return Pos.getArchVGPRNum() - Neg.getArchVGPRNum();
-    }
-    int getAGPRNum() const { return Pos.getAGPRNum() - Neg.getAGPRNum(); }
-    int getAVGPRNum() const { return Pos.getAVGPRNum() - Neg.getAVGPRNum(); }
-
-    bool hasRPIncrease() const {
-      return getSGPRNum() > 0 || getArchVGPRNum() > 0 || getAGPRNum() > 0 ||
-             getAVGPRNum() > 0;
-    }
-
-    RPDiff &operator+=(const RPDiff &RHS) {
-      Pos += RHS.Pos;
-      Neg += RHS.Neg;
-      return *this;
-    }
-
-    RPDiff &operator+=(const GCNRegPressure &RHS) {
-      Pos += RHS;
-      return *this;
-    }
-
-    RPDiff &operator-=(const RPDiff &RHS) {
-      Pos -= RHS.Pos;
-      Neg -= RHS.Neg;
-      return *this;
-    }
-
-    RPDiff &operator-=(const GCNRegPressure &RHS) {
-      Neg += RHS;
-      return *this;
-    }
-
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
-    friend raw_ostream &operator<<(raw_ostream &OS, const RPDiff &Diff) {
-      bool FirstPrint = true;
-      auto GetNum = [&](int NumRegs, StringRef RegKind) -> std::string {
-        if (!NumRegs)
-          return "";
-        std::string Sign = (NumRegs > 0 ? "+" : "");
-        if (FirstPrint)
-          FirstPrint = false;
-        else
-          Sign = " / " + Sign;
-        return Sign + std::to_string(NumRegs) + " " + RegKind.str();
-      };
-
-      OS << GetNum(Diff.getSGPRNum(), "SGPRs")
-         << GetNum(Diff.getArchVGPRNum(), "ArchVGPRs")
-         << GetNum(Diff.getAGPRNum(), "AGPRs")
-         << GetNum(Diff.getAVGPRNum(), "AVGPRs");
-      return OS;
-    }
-#endif
-  };
-
   /// Sets up the target such that the register pressure starting at \p RP does
   /// not show register spilling on function \p MF (w.r.t. the function's
   /// mininum target occupancy).
@@ -295,9 +216,7 @@ public:
   /// towards achieving the RP target for at least one register kind.
   bool isSaveBeneficial(const GCNRegPressure &SaveRP) const;
 
-  bool hasDiffInTargetRC(const RPDiff &Diff) const;
-
-  unsigned getTotalNetBeneficialSave(const RPDiff &Diff) const;
+  unsigned getTotalNetBeneficialSave(const GCNRegPressure &SaveRP) const;
 
   /// Saves virtual register \p Reg with lanemask \p Mask.
   void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
@@ -310,16 +229,6 @@ public:
   }
 
   void saveRP(const GCNRegPressure &SaveRP) { RP -= SaveRP; }
-
-  /// Applies \p Diff to the current RP.
-  void applyDiff(const RPDiff &Diff) {
-    RP += Diff.Pos;
-    RP -= Diff.Neg;
-  }
-
-  /// Determines whether adding virtual register \p Reg will push pressure above
-  /// the desired RP target.
-  bool wouldViolateTarget(const RPDiff &Diff) const;
 
   /// Whether the current RP is at or below the defined pressure target.
   bool satisfied() const { return satisfied(RP); }

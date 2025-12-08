@@ -327,10 +327,7 @@ void RematDAG::partiallyRollbackReg(unsigned RegIdx) {
   MachineBasicBlock &MBB = *RegionBB[Reg.DefRegion];
   remat(RegIdx, MBB, InsertPos, OldDefReg, *ModelReg.DefMI);
   substituteDependencies(ModelRegIdx, RegIdx);
-
   LISUpdates.insert(ModelRegIdx);
-  for (unsigned MOIdx : Reg.UnrematableOprds)
-    UnrematLISUpdates.insert(Reg.DefMI->getOperand(MOIdx).getReg());
 
   LLVM_DEBUG({
     rdbgs() << "** Partially rolled back " << printID(RegIdx) << " @ ";
@@ -404,8 +401,6 @@ bool RematDAG::deleteRegIfUnused(unsigned RegIdx) {
   DeadRegs.try_emplace(RegIdx, DefReg, LIS.getInstructionIndex(*Reg.DefMI));
   LIS.removeInterval(DefReg);
   LISUpdates.erase(RegIdx);
-  for (unsigned MOIdx : Reg.UnrematableOprds)
-    UnrematLISUpdates.insert(Reg.DefMI->getOperand(MOIdx).getReg());
 
   deleteMI(Reg.DefRegion, Reg.DefMI);
   Reg.DefMI = nullptr;
@@ -455,7 +450,7 @@ void RematDAG::substituteUserReg(unsigned FromRegIdx, unsigned ToRegIdx,
   // If the user is rematerializable, we must change its dependency to the
   // new register.
   unsigned UserRegIdx = getRematRegIdx(UserMI);
-  if (UserRegIdx == getNumRegs())
+  if (UserRegIdx == NoReg)
     return;
   RematReg &UserReg = Regs[UserRegIdx];
 
@@ -468,7 +463,9 @@ void RematDAG::substituteUserReg(unsigned FromRegIdx, unsigned ToRegIdx,
   UserDep->RegIdx = ToRegIdx;
 }
 
-void RematDAG::updateLiveIntervals(bool UpdateUnrematable) {
+void RematDAG::updateLiveIntervals() {
+  // Update intervals for rematerializable registers.
+  DenseSet<Register> SeenUnrematRegs;
   for (unsigned RegIdx : LISUpdates) {
     const RematReg &Reg = getReg(RegIdx);
     assert(Reg.DefMI && "trying to update dead register");
@@ -483,17 +480,22 @@ void RematDAG::updateLiveIntervals(bool UpdateUnrematable) {
       LIS.getInterval(DefReg).print(dbgs());
       rdbgs() << '\n' << printRegUsers(RegIdx);
     });
+
+    // Update intervals for unrematerializable operands.
+    for (unsigned MOIdx : Reg.UnrematableOprds) {
+      Register UnrematReg = Reg.DefMI->getOperand(MOIdx).getReg();
+      if (!SeenUnrematRegs.insert(UnrematReg).second)
+        continue;
+      LIS.removeInterval(UnrematReg);
+      LIS.createAndComputeVirtRegInterval(UnrematReg);
+      LLVM_DEBUG(dbgs() << "  Re-computed interval for unrematable register "
+                        << llvm::printReg(
+                               UnrematReg, &TRI,
+                               Reg.DefMI->getOperand(MOIdx).getSubReg(), &MRI)
+                        << '\n');
+    }
   }
   LISUpdates.clear();
-  if (UpdateUnrematable) {
-    for (Register Reg : UnrematLISUpdates) {
-      LIS.removeInterval(Reg);
-      LIS.createAndComputeVirtRegInterval(Reg);
-      LLVM_DEBUG(dbgs() << "Re-computed interval for unrematable register "
-                        << printReg(Reg) << '\n');
-    }
-    UnrematLISUpdates.clear();
-  }
 }
 
 bool RematDAG::isMOAvailableAtUses(const MachineOperand &MO,
@@ -510,30 +512,6 @@ bool RematDAG::isMOAvailableAtUses(const MachineOperand &MO,
   for (SlotIndex Use : Uses) {
     if (!isAvailableAtUse(DefVN, Mask, Use, LI))
       return false;
-  }
-  return true;
-}
-
-bool RematDAG::areUnrematOprdsAvailableAtUses(unsigned RegIdx,
-                                              ArrayRef<SlotIndex> Uses) const {
-  const RematReg &Reg = getReg(RegIdx);
-  for (unsigned MOIdx : Reg.UnrematableOprds) {
-    if (!isMOAvailableAtUses(Reg.DefMI->getOperand(MOIdx), Uses))
-      return false;
-  }
-  return true;
-}
-
-bool RematDAG::isDependencyAvailableInUseRegions(unsigned RegIdx,
-                                                 unsigned DepIdx) const {
-  const RematReg &Reg = getReg(RegIdx);
-  for (const RematReg::Dependency Dep : Reg.Dependencies) {
-    const RematReg &DepReg = getReg(Dep.RegIdx);
-    for (const auto &[UseRegion, _] : Reg.Uses) {
-      if (UseRegion != Reg.DefRegion)
-        if (!DepReg.Remats.contains(UseRegion))
-          return false;
-    }
   }
   return true;
 }
@@ -593,7 +571,7 @@ bool RematDAG::build() {
 
   LLVM_DEBUG({
     for (unsigned I = 0, E = getNumRegs(); I < E; ++I)
-      dbgs() << print(I) << '\n';
+      dbgs() << printChain(I) << '\n';
   });
   return !Regs.empty();
 }
@@ -679,11 +657,11 @@ void RematDAG::collectRematRegs(unsigned DefRegion) {
 unsigned RematDAG::getRematRegIdx(const MachineInstr &MI) const {
   if (!MI.getNumOperands() || !MI.getOperand(0).isReg() ||
       MI.getOperand(0).readsReg())
-    return getNumRegs();
+    return NoReg;
   Register Reg = MI.getOperand(0).getReg();
   auto UserRegIt = RegToIdx.find(Reg);
   if (UserRegIt == RegToIdx.end())
-    return getNumRegs();
+    return NoReg;
   return UserRegIt->second;
 }
 
@@ -708,9 +686,6 @@ RematDAG::createReg(unsigned RegIdx, unsigned UseRegion,
   remat(NewRegIdx, *InsertPos->getParent(), InsertPos, NewDefReg, *Reg.DefMI);
   substituteDependencies(RegIdx, NewRegIdx);
 
-  for (unsigned MOIdx : NewReg.UnrematableOprds)
-    UnrematLISUpdates.insert(NewReg.DefMI->getOperand(MOIdx).getReg());
-
   LLVM_DEBUG({
     rdbgs() << "** Rematerialized " << printID(RegIdx) << " as "
             << printID(NewRegIdx) << " @ ";
@@ -729,6 +704,8 @@ unsigned RematDAG::findAvailableRematInRegion(unsigned RegIdx, unsigned Region,
   ArrayRef<unsigned> RegionRemats = It->getSecond();
   assert(!RegionRemats.empty() && "empty region remats");
 
+  SlotIndex BestSlot;
+  unsigned BestRegIdx = NoReg;
   for (unsigned RematRegIdx : RegionRemats) {
     const RematReg &RematReg = getReg(RematRegIdx);
     if (!RematReg.DefMI) {
@@ -736,25 +713,31 @@ unsigned RematDAG::findAvailableRematInRegion(unsigned RegIdx, unsigned Region,
       // rematerialized or rolled back.
       continue;
     }
-    SlotIndex RematRegSlot = LIS.getInstructionIndex(*Reg.DefMI);
-    if (RematRegSlot.getRegSlot() < AvailableAt) {
+    SlotIndex RematRegSlot =
+        LIS.getInstructionIndex(*RematReg.DefMI).getRegSlot();
+    if (RematRegSlot < AvailableAt &&
+        (BestRegIdx == NoReg || RematRegSlot > BestSlot)) {
+      BestSlot = RematRegSlot;
+      BestRegIdx = RematRegIdx;
+
       // Check that the register's is actually available at the position. Don't
       // rely on a live-range check as live ranges can become stale during
       // rematerialization. The register must be available up to its last use in
       // the region, so we can just check whether that is later than the target
       // position.
-      if (auto It = RematReg.Uses.find(Region); It != RematReg.Uses.end()) {
-        // FIXME: Re-enable this kind of check once we have a better idea of how
-        // to do it; it's too conservative at the moment.
+      // if (auto It = RematReg.Uses.find(Region); It != RematReg.Uses.end()) {
+      //   // FIXME: Re-enable this kind of check once we have a better idea of
+      //   how
+      //   // to do it; it's too conservative at the moment.
 
-        // SlotIndex AliveTo = LIS.getInstructionIndex(*It->getSecond().LastMI);
-        // if (AliveTo.getRegSlot(true) >= AvailableAt)
-        //   return RematRegIdx;
-        return RematRegIdx;
-      }
+      //   // SlotIndex AliveTo =
+      //   LIS.getInstructionIndex(*It->getSecond().LastMI);
+      //   // if (AliveTo.getRegSlot(true) >= AvailableAt)
+      //   //   return RematRegIdx;
+      // }
     }
   }
-  return NoReg;
+  return BestRegIdx;
 }
 
 void RematReg::addUser(MachineInstr *MI, unsigned Region,
@@ -833,24 +816,7 @@ void RematReg::RegionUses::eraseUser(MachineInstr *DeletedUser,
   }
 }
 
-Printable RematReg::print(bool SkipRegions) const {
-  return Printable([&, SkipRegions](raw_ostream &OS) {
-    if (!SkipRegions) {
-      OS << "[" << DefRegion;
-      if (!Uses.empty()) {
-        auto It = Uses.begin();
-        OS << " -> " << It->first;
-        while (++It != Uses.end())
-          OS << "," << It->first;
-      }
-      OS << "] ";
-    }
-    DefMI->print(OS, /*IsStandalone=*/true, /*SkipOpers=*/false,
-                 /*SkipDebugLoc=*/false, /*AddNewLine=*/false);
-  });
-}
-
-Printable RematDAG::print(unsigned RootIdx) const {
+Printable RematDAG::printChain(unsigned RootIdx) const {
   return Printable([&, RootIdx](raw_ostream &OS) {
     DenseMap<unsigned, unsigned> RegDepths;
     std::function<void(unsigned, unsigned)> WalkChain =
@@ -873,8 +839,7 @@ Printable RematDAG::print(unsigned RootIdx) const {
     for (const auto &[RegIdx, Depth] : Regs) {
       std::string Shift(2 * Depth, ' ');
       std::string Sep = Depth ? "| " : "-> ";
-      OS << Shift << Sep << '(' << RegIdx << ") "
-         << getReg(RegIdx).print(/*SkipRegions=*/Depth) << '\n';
+      OS << Shift << Sep << printReg(RegIdx, /*SkipRegions=*/Depth) << '\n';
     }
     OS << printRegUsers(RootIdx);
   });
@@ -886,7 +851,45 @@ Printable RematDAG::printID(unsigned RegIdx) const {
     OS << '(' << RegIdx << '/';
     Register DefReg = Reg.DefMI ? Reg.getDefReg() : DeadRegs.at(RegIdx).Reg;
     unsigned SubIdx = Reg.DefMI ? Reg.DefMI->getOperand(0).getSubReg() : 0;
-    OS << printReg(DefReg, &TRI, SubIdx, &MRI) << ")[" << Reg.DefRegion << "]";
+    OS << llvm::printReg(DefReg, &TRI, SubIdx, &MRI) << ")[" << Reg.DefRegion
+       << "]";
+  });
+}
+
+Printable RematDAG::printReg(unsigned RegIdx, bool SkipRegions) const {
+  return Printable([&, RegIdx, SkipRegions](raw_ostream &OS) {
+    const RematReg &Reg = getReg(RegIdx);
+    if (!SkipRegions) {
+      OS << printID(RegIdx) << " [" << Reg.DefRegion;
+      if (!Reg.Uses.empty()) {
+        assert(Reg.DefMI && "dead register cannot have uses");
+        const LiveInterval &LI = LIS.getInterval(Reg.getDefReg());
+        // First display all regions in which the register is live-through and
+        // not used.
+        bool First = true;
+        for (const auto [I, Bounds] : enumerate(Regions)) {
+          if (Bounds.first == Bounds.second)
+            continue;
+          if (!Reg.Uses.contains(I) &&
+              LI.liveAt(LIS.getInstructionIndex(*Bounds.first)) &&
+              LI.liveAt(LIS.getInstructionIndex(*std::prev(Bounds.second))
+                            .getRegSlot())) {
+            OS << (First ? " -- " : ",") << I;
+            First = false;
+          }
+        }
+        OS << (First ? " --> " : " -> ");
+
+        // Then display regions in which the register is used.
+        auto It = Reg.Uses.begin();
+        OS << It->first;
+        while (++It != Reg.Uses.end())
+          OS << "," << It->first;
+      }
+      OS << "] ";
+    }
+    Reg.DefMI->print(OS, /*IsStandalone=*/true, /*SkipOpers=*/false,
+                     /*SkipDebugLoc=*/false, /*AddNewLine=*/false);
   });
 }
 
@@ -902,8 +905,11 @@ Printable RematDAG::printRegUsers(unsigned RegIdx) const {
 Printable RematDAG::printUser(const MachineInstr *MI) const {
   return Printable([&, MI](raw_ostream &OS) {
     unsigned RegIdx = getRematRegIdx(*MI);
-    if (RegIdx != getNumRegs())
-      OS << printID(RegIdx) << " ";
+    if (RegIdx != NoReg)
+      OS << printID(RegIdx);
+    else
+      OS << "(-/-)[" << MIRegion.at(MI) << ']';
+    OS << ' ';
     MI->print(OS, /*IsStandalone=*/true, /*SkipOpers=*/false,
               /*SkipDebugLoc=*/false, /*AddNewLine=*/false);
     OS << " @ ";

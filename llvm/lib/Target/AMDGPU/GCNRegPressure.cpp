@@ -435,63 +435,22 @@ bool GCNRPTarget::isSaveBeneficial(const GCNRegPressure &SaveRP) const {
   return false;
 }
 
-bool GCNRPTarget::hasDiffInTargetRC(const RPDiff &Diff) const {
-  if (RP.getSGPRNum() > MaxSGPRs &&
-      (Diff.Pos.getSGPRNum() || Diff.Neg.getSGPRNum()))
-    return true;
-  if (UnifiedRF) {
-    return RP.getVGPRNum(true) > MaxUnifiedVGPRs &&
-           (Diff.Pos.getVGPRNum(true) || Diff.Neg.getVGPRNum(true));
-  }
-  return (RP.getArchVGPRNum() > MaxVGPRs &&
-          (Diff.Pos.getArchVGPRNum() || Diff.Neg.getArchVGPRNum())) ||
-         (RP.getAGPRNum() > MaxVGPRs &&
-          (Diff.Pos.getAGPRNum() || Diff.Neg.getAGPRNum()));
-}
-
-unsigned GCNRPTarget::getTotalNetBeneficialSave(const RPDiff &Diff) const {
+unsigned
+GCNRPTarget::getTotalNetBeneficialSave(const GCNRegPressure &SaveRP) const {
   unsigned NetSave = 0;
-
-  int NumExtraSGPRs = Diff.getSGPRNum();
-  if (NumExtraSGPRs < 0 && RP.getSGPRNum() > MaxSGPRs)
-    NetSave += -NumExtraSGPRs;
-
+  if (SaveRP.getSGPRNum() && RP.getSGPRNum() > MaxSGPRs)
+    NetSave += SaveRP.getSGPRNum();
+  
   if (UnifiedRF) {
-    int NumExtraVGPRs = Diff.getVGPRNum(true);
-    if (NumExtraVGPRs < 0 && RP.getVGPRNum(true) > MaxUnifiedVGPRs)
-      NetSave += -NumExtraVGPRs;
+    if (SaveRP.getVGPRNum(true) && RP.getVGPRNum(true) > MaxUnifiedVGPRs)
+      NetSave += SaveRP.getVGPRNum(true);
   } else {
-    int NumExtraArchVGPRs = Diff.getArchVGPRNum();
-    if (NumExtraArchVGPRs < 0 && RP.getArchVGPRNum() > MaxVGPRs)
-      NetSave += -NumExtraArchVGPRs;
-
-    int NumExtraAGPRs = Diff.getAGPRNum();
-    if (NumExtraAGPRs < 0 && RP.getAGPRNum() > MaxVGPRs)
-      NetSave += -NumExtraAGPRs;
+    if (SaveRP.getArchVGPRNum() && RP.getArchVGPRNum() > MaxVGPRs)
+      NetSave += SaveRP.getArchVGPRNum();
+    if (SaveRP.getAGPRNum() && RP.getAGPRNum() > MaxVGPRs)
+      NetSave += SaveRP.getAGPRNum();
   }
   return NetSave;
-}
-
-bool GCNRPTarget::wouldViolateTarget(const RPDiff &Diff) const {
-  if (int NumExtraSGPRs = Diff.getSGPRNum(); NumExtraSGPRs > 0) {
-    if (NumExtraSGPRs + RP.getSGPRNum() > MaxSGPRs)
-      return true;
-  }
-  if (int NumExtraArchVGPRs = Diff.getArchVGPRNum(); NumExtraArchVGPRs > 0) {
-    if (NumExtraArchVGPRs + RP.getArchVGPRNum() > MaxVGPRs)
-      return true;
-  }
-  if (int NumExtraAGPRs = Diff.getAGPRNum(); NumExtraAGPRs > 0) {
-    if (NumExtraAGPRs + RP.getAGPRNum() > MaxVGPRs)
-      return true;
-  }
-  if (!UnifiedRF)
-    return false;
-  if (int NumVGPRs = Diff.getVGPRNum(true); NumVGPRs > 0) {
-    if (NumVGPRs + RP.getVGPRNum(true) > MaxUnifiedVGPRs)
-      return true;
-  }
-  return false;
 }
 
 bool GCNRPTarget::satisfied(const GCNRegPressure &TestRP) const {

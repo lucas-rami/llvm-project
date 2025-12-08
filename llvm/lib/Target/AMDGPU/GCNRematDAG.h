@@ -113,8 +113,6 @@ struct RematReg {
     return Uses.size() > 1 || (!Uses.empty() && !Uses.contains(DefRegion));
   }
 
-  Printable print(bool SkipRegions = false) const;
-
 private:
   void addUser(MachineInstr *MI, unsigned Region, const LiveIntervals &LIS);
 
@@ -224,6 +222,8 @@ private:
 /// 3. The register has at least one non-debug use.
 class RematDAG {
 public:
+  static constexpr unsigned NoReg = ~0;
+
   RematDAG(SmallVectorImpl<RegionBoundaries> &Regions, bool RegionsTopDown,
            MachineRegisterInfo &MRI, LiveIntervals &LIS, MachineFunction &MF,
            const TargetRegisterInfo &TRI, const TargetInstrInfo &TII)
@@ -246,6 +246,8 @@ public:
       return Reg.getDefReg();
     return DeadRegs.at(Idx).Reg;
   }
+
+  inline unsigned getNumRegions() const { return Regions.size(); }
 
   inline unsigned getRegion(const MachineInstr *MI) const {
     return MIRegion.at(MI);
@@ -279,24 +281,17 @@ public:
 
   unsigned getRematRegIdx(const MachineInstr &MI) const;
 
-  void updateLiveIntervals(bool UpdateUnrematable = true);
+  void updateLiveIntervals();
 
   bool isMOAvailableAtUses(const MachineOperand &MO,
                            ArrayRef<SlotIndex> Uses) const;
 
-  bool areUnrematOprdsAvailableAtUses(unsigned RegIdx,
-                                      ArrayRef<SlotIndex> Uses) const;
-
-  bool isDependencyAvailableInUseRegions(unsigned RegIdx,
-                                         unsigned DepIdx) const;
-
-  static constexpr unsigned NoReg = ~0;
-
   unsigned findAvailableRematInRegion(unsigned RegIdx, unsigned Region,
                                       SlotIndex AvailableAt) const;
 
-  Printable print(unsigned RootIdx) const;
+  Printable printChain(unsigned RootIdx) const;
   Printable printID(unsigned RegIdx) const;
+  Printable printReg(unsigned RegIdx, bool SkipRegions = false) const;
   Printable printRegUsers(unsigned RegIdx) const;
   Printable printUser(const MachineInstr *MI) const;
 
@@ -330,7 +325,6 @@ private:
   DenseMap<unsigned, DeadRegInfo> DeadRegs;
 
   DenseSet<unsigned> LISUpdates;
-  DenseSet<Register> UnrematLISUpdates;
 
   unsigned findAndMoveBestRemat(ArrayRef<unsigned> Remats,
                                 MachineBasicBlock::iterator InsertPos);
