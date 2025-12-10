@@ -2012,6 +2012,7 @@ struct InterRegionCand {
   GCNRegPressure Save;
 
   DenseMap<unsigned, RematDAG::DependencyData> Remats;
+  SmallDenseSet<std::pair<Register, unsigned>, 4> LRExtensions;
 
   InterRegionCand(unsigned RootIdx, const GCNScheduleDAGMILive &DAG,
                   const RematDAG &RDAG, bool SkipLiveCheck = false)
@@ -2064,7 +2065,8 @@ struct InterRegionCand {
   bool update(bool ReduceSpill, const PreRARematStage::RegionsInfo &RI,
               const PreRARematStage::FreqInfo &FI, const RematDAG &RDAG,
               const LiveIntervals &LIS) {
-    if (!checkRematerializability(RDAG, LIS))
+    computeDependencies(RDAG, LIS);
+    if (Remats.empty())
       return false;
 
     const RematReg &Reg = RDAG.getReg(RootIdx);
@@ -2120,6 +2122,10 @@ struct InterRegionCand {
 
   bool maybeDetrimental(const PreRARematStage::RegionsInfo &RI,
                         const RematDAG &RDAG, const LiveIntervals &LIS) const {
+    // FIXME: We don't now how to handle live-range extensions yet.
+    if (!LRExtensions.empty())
+      return true;
+
     const RematReg &Reg = RDAG.getReg(RootIdx);
     for (const auto &[UseRegion, Remat] : Remats) {
       if (Remat.Dependencies.empty() || !RI.TargetRegions[UseRegion])
@@ -2294,31 +2300,26 @@ private:
   /// rematerialization is useless.
   bool hasNullScore() const { return !RegionImpact; }
 
-  bool checkRematerializability(const RematDAG &RDAG,
-                                const LiveIntervals &LIS) {
+  void computeDependencies(const RematDAG &RDAG, const LiveIntervals &LIS) {
     Remats.clear();
     const RematReg &RootReg = RDAG.getReg(RootIdx);
     if (!RootReg.isUsefulToRematerialize())
-      return false;
+      return;
 
     // Collect all slots where the register would be rematerialized to.
     for (const auto &[UseRegion, RegionUses] : RootReg.Uses) {
       if (UseRegion == RootReg.DefRegion)
         continue;
-      SlotIndex FirstUse = LIS.getInstructionIndex(*RegionUses.FirstMI);
-      if (!checkRematerializabilityTo(UseRegion, FirstUse.getRegSlot(true),
-                                      RDAG, LIS)) {
-        Remats.clear();
-        return false;
-      }
+      computeRegionDependencies(
+          UseRegion,
+          LIS.getInstructionIndex(*RegionUses.FirstMI).getRegSlot(true), RDAG,
+          LIS);
     }
-
-    return !Remats.empty();
   }
 
-  bool checkRematerializabilityTo(unsigned UseRegion, SlotIndex Use,
-                                  const RematDAG &RDAG,
-                                  const LiveIntervals &LIS) {
+  void computeRegionDependencies(unsigned UseRegion, SlotIndex Use,
+                                 const RematDAG &RDAG,
+                                 const LiveIntervals &LIS) {
     // Check chain validity for rematerializing in this using region.
     SmallVector<unsigned, 4> Chain{RootIdx};
     SmallDenseSet<unsigned, 4> SeenDeps;
@@ -2326,13 +2327,14 @@ private:
     do {
       unsigned ChainRegIdx = Chain.pop_back_val();
 
-      // The live-range of unrematerializable operands must not be extended by
-      // the rematerialization. This applies to unrematerializable operands of
-      // all transitive dependencies as well as the root register.
+      // Unrematerializable operands are either available and should be re-used
+      // or must have their live-range extended for the rematerialization to be
+      // possible.
       const RematReg &ChainReg = RDAG.getReg(ChainRegIdx);
       for (unsigned MOIdx : ChainReg.UnrematableOprds) {
-        if (!RDAG.isMOAvailableAtUses(ChainReg.DefMI->getOperand(MOIdx), Use))
-          return false;
+        const MachineOperand &MO = ChainReg.DefMI->getOperand(MOIdx);
+        if (!RDAG.isMOAvailableAtUses(MO, Use))
+          LRExtensions.insert({MO.getReg(), MO.getSubReg()});
       }
 
       // All dependencies must either be available at uses or rematerializable
@@ -2360,7 +2362,6 @@ private:
         }
       }
     } while (!Chain.empty());
-    return true;
   }
 };
 
@@ -2430,7 +2431,7 @@ bool PreRARematStage::performInterRegionRemats(RegionsInfo &RI) {
         // interrupt the round as valid rematerializations may exist further
         // down the candidate order. Such candidates may become non detrimental
         // in the future if other rematerializations improve RP enough in
-        // regions that make this candidate a bad chiuce currently.
+        // regions that make this candidate a bad choice currently.
         continue;
       }
 

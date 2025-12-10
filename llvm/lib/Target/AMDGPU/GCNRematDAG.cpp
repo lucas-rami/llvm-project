@@ -523,11 +523,8 @@ bool RematDAG::isReMaterializable(const MachineInstr &MI) const {
   for (const MachineOperand &MO : MI.all_uses()) {
     // We can't remat physreg uses, unless it is a constant or an ignorable
     // use (e.g. implicit exec use on VALU instructions)
-    if (MO.getReg().isPhysical()) {
-      if (MRI.isConstantPhysReg(MO.getReg()) || TII.isIgnorableUse(MO))
-        continue;
+    if (MO.getReg().isPhysical() && !TII.isIgnorableUse(MO))
       return false;
-    }
   }
 
   return true;
