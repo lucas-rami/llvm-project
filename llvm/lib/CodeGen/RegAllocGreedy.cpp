@@ -82,6 +82,11 @@ STATISTIC(NumGlobalSplits, "Number of split global live ranges");
 STATISTIC(NumLocalSplits,  "Number of split local live ranges");
 STATISTIC(NumEvicted,      "Number of interferences evicted");
 
+
+static cl::opt<bool> PrintLIS("amdgpu-print-lis", cl::Hidden, cl::desc(""),
+                              cl::init(false));
+static bool FirstRAPass = true;
+                              
 static cl::opt<SplitEditor::ComplementSpillMode> SplitSpillMode(
     "split-spill-mode", cl::Hidden,
     cl::desc("Spill mode for splitting live ranges"),
@@ -2900,6 +2905,11 @@ bool RAGreedy::run(MachineFunction &mf) {
     MF->verify(LIS, Indexes, "Before greedy register allocator", &errs());
 
   RegAllocBase::init(*this->VRM, *this->LIS, *this->Matrix);
+
+  if (PrintLIS && FirstRAPass) {
+    FirstRAPass = false;
+    LIS->print(dbgs());
+  }
 
   // Early return if there is no virtual register to be allocated to a
   // physical register.
