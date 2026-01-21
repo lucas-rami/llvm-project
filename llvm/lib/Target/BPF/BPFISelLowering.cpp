@@ -787,7 +787,7 @@ static Function *createBPFUnreachable(Module *M) {
     return NewF;
 
   DIBuilder DBuilder(*M);
-  DITypeArray ParamTypes =
+  DITypeRefArray ParamTypes =
       DBuilder.getOrCreateTypeArray({nullptr /*void return*/});
   DISubroutineType *FuncType = DBuilder.createSubroutineType(ParamTypes);
   DICompileUnit *CU = *M->debug_compile_units_begin();

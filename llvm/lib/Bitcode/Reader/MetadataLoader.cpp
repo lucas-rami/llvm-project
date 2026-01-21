@@ -165,11 +165,11 @@ public:
   /// Upgrade a type that had an MDString reference.
   Metadata *upgradeTypeRef(Metadata *MaybeUUID);
 
-  /// Upgrade a type array that may have MDString references.
-  Metadata *upgradeTypeArray(Metadata *MaybeTuple);
+  /// Upgrade a type ref array that may have MDString references.
+  Metadata *upgradeTypeRefArray(Metadata *MaybeTuple);
 
 private:
-  Metadata *resolveTypeArray(Metadata *MaybeTuple);
+  Metadata *resolveTypeRefArray(Metadata *MaybeTuple);
 };
 } // namespace
 
@@ -246,7 +246,7 @@ void BitcodeReaderMetadataList::tryToResolveCycles() {
   // Upgrade from old type ref arrays.  In strange cases, this could add to
   // OldTypeRefs.Unknown.
   for (const auto &Array : OldTypeRefs.Arrays)
-    Array.second->replaceAllUsesWith(resolveTypeArray(Array.first.get()));
+    Array.second->replaceAllUsesWith(resolveTypeRefArray(Array.first.get()));
   OldTypeRefs.Arrays.clear();
 
   // Replace old string-based type refs with the resolved node, if possible.
@@ -302,29 +302,29 @@ Metadata *BitcodeReaderMetadataList::upgradeTypeRef(Metadata *MaybeUUID) {
   return Ref.get();
 }
 
-Metadata *BitcodeReaderMetadataList::upgradeTypeArray(Metadata *MaybeTuple) {
+Metadata *BitcodeReaderMetadataList::upgradeTypeRefArray(Metadata *MaybeTuple) {
   auto *Tuple = dyn_cast_or_null<MDTuple>(MaybeTuple);
   if (!Tuple || Tuple->isDistinct())
     return MaybeTuple;
 
   // Look through the array immediately if possible.
   if (!Tuple->isTemporary())
-    return resolveTypeArray(Tuple);
+    return resolveTypeRefArray(Tuple);
 
   // Create and return a placeholder to use for now.  Eventually
-  // resolveTypeArrays() will be resolve this forward reference.
+  // resolveTypeRefArrays() will be resolve this forward reference.
   OldTypeRefs.Arrays.emplace_back(
       std::piecewise_construct, std::forward_as_tuple(Tuple),
       std::forward_as_tuple(MDTuple::getTemporary(Context, {})));
   return OldTypeRefs.Arrays.back().second.get();
 }
 
-Metadata *BitcodeReaderMetadataList::resolveTypeArray(Metadata *MaybeTuple) {
+Metadata *BitcodeReaderMetadataList::resolveTypeRefArray(Metadata *MaybeTuple) {
   auto *Tuple = dyn_cast_or_null<MDTuple>(MaybeTuple);
   if (!Tuple || Tuple->isDistinct())
     return MaybeTuple;
 
-  // Look through the DITypeArray, upgrading each DIType *.
+  // Look through the DITypeRefArray, upgrading each DIType *.
   SmallVector<Metadata *, 32> Ops;
   Ops.reserve(Tuple->getNumOperands());
   for (Metadata *MD : Tuple->operands())
@@ -1997,14 +1997,14 @@ Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
   case bitc::METADATA_SUBROUTINE_TYPE: {
     if (Record.size() < 3 || Record.size() > 4)
       return error("Invalid record");
-    bool IsOldTypeArray = Record[0] < 2;
+    bool IsOldTypeRefArray = Record[0] < 2;
     unsigned CC = (Record.size() > 3) ? Record[3] : 0;
 
     IsDistinct = Record[0] & 0x1;
     DINode::DIFlags Flags = static_cast<DINode::DIFlags>(Record[1]);
     Metadata *Types = getMDOrNull(Record[2]);
-    if (LLVM_UNLIKELY(IsOldTypeArray))
-      Types = MetadataList.upgradeTypeArray(Types);
+    if (LLVM_UNLIKELY(IsOldTypeRefArray))
+      Types = MetadataList.upgradeTypeRefArray(Types);
 
     MetadataList.assignValue(
         GET_OR_DISTINCT(DISubroutineType, (Context, Flags, CC, Types)),
