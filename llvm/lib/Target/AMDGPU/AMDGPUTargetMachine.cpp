@@ -2320,6 +2320,8 @@ void AMDGPUCodeGenPassBuilder::addPreRewrite(PassManagerWrapper &PMW) const {
   if (EnableRegReassign) {
     addMachineFunctionPass(GCNNSAReassignPass(), PMW);
   }
+
+  addMachineFunctionPass(AMDGPURewriteAGPRCopyMFMAPass(), PMW);
 }
 
 void AMDGPUCodeGenPassBuilder::addMachineSSAOptimization(
