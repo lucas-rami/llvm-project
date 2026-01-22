@@ -7091,7 +7091,7 @@ bool CodeGenPrepare::optimizePhiType(
     }
   }
 
-  if (!ConvertTy || !AnyAnchored ||
+  if (!ConvertTy || !AnyAnchored || PhiTy == ConvertTy ||
       !TLI->shouldConvertPhiType(PhiTy, ConvertTy))
     return false;
 
