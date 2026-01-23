@@ -6670,7 +6670,8 @@ void LoopVectorizationCostModel::collectInLoopReductions() {
     // In-loop AnyOf and FindIV reductions are not yet supported.
     RecurKind Kind = RdxDesc.getRecurrenceKind();
     if (RecurrenceDescriptor::isAnyOfRecurrenceKind(Kind) ||
-        RecurrenceDescriptor::isFindIVRecurrenceKind(Kind))
+        RecurrenceDescriptor::isFindIVRecurrenceKind(Kind) ||
+        RecurrenceDescriptor::isFindLastRecurrenceKind(Kind))
       continue;
 
     // If the target would prefer this reduction to happen "in-loop", then we
@@ -10046,10 +10047,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
   IC = UserIC > 0 ? UserIC : IC;
 
   // FIXME: Enable interleaving for FindLast reductions.
-  if (any_of(LVL.getReductionVars().values(), [](auto &RdxDesc) {
-        return RecurrenceDescriptor::isFindLastRecurrenceKind(
-            RdxDesc.getRecurrenceKind());
-      })) {
+  if (InterleaveLoop && hasFindLastReductionPhi(LVP.getPlanFor(VF.Width))) {
     LLVM_DEBUG(dbgs() << "LV: Not interleaving due to FindLast reduction.\n");
     IntDiagMsg = {"FindLastPreventsScalarInterleaving",
                   "Unable to interleave due to FindLast reduction."};
