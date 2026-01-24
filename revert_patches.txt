@@ -10,4 +10,5 @@ breaks build of aqlprofiler
 ---
 breaks theRock and npsdb builds of hipRuntime
 [HIP] Pass HIP library directly and refactor (#176019)
+[HIP] Provide implicit include to ROCm library directory (#177704)
 ---
