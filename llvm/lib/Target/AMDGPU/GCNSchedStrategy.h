@@ -312,9 +312,14 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   // Compute and cache live-ins and pressure for all regions in block.
   void computeBlockPressure(unsigned RegionIdx, const MachineBasicBlock *MBB);
 
+  /// Makes the scheduler try to achieve an occupancy of \p TargetOccupancy.
+  void setTargetOccupancy(unsigned TargetOccupancy);
+
   void runSchedStages();
 
   std::unique_ptr<GCNSchedStage> createSchedStage(GCNSchedStageID SchedStageID);
+
+  void deleteMI(unsigned RegionIdx, MachineInstr *MI);
 
 public:
   GCNScheduleDAGMILive(MachineSchedContext *C,
@@ -374,11 +379,11 @@ public:
   // be skipped.
   virtual bool initGCNRegion();
 
+  // Finalize state after scheduling a region.
+  virtual void finalizeGCNRegion();
+
   // Track whether a new region is also a new MBB.
   void setupNewBlock();
-
-  // Finalize state after scheudling a region.
-  void finalizeGCNRegion();
 
   // Check result of scheduling.
   void checkScheduling();
@@ -404,8 +409,11 @@ public:
   // Returns true if the new schedule may result in more spilling.
   bool mayCauseSpilling(unsigned WavesAfter);
 
-  // Attempt to revert scheduling for this region.
-  void revertScheduling();
+  /// Sets the schedule of region \p RegionIdx to \p MIOrder. The MIs in \p
+  /// MIOrder must be exactly the same as the ones currently existing inside the
+  /// region, only in a different order that honors def-use chains.
+  void modifyRegionSchedule(unsigned RegionIdx,
+                            ArrayRef<MachineInstr *> MIOrder);
 
   void advanceRegion() { RegionIdx++; }
 
@@ -466,8 +474,6 @@ public:
 class PreRARematStage : public GCNSchedStage {
 public:
   struct RegionsInfo {
-    /// Regions which are above the stage's RP target (anywhere, at live-ins, or
-    /// at live-outs).
     BitVector TargetRegions;
     /// RP targets for all regions.
     SmallVector<GCNRPTarget> RPTargets;
@@ -555,7 +561,6 @@ private:
   /// objective is spilling reduction.
   std::optional<unsigned> TargetOcc;
   /// Achieved occupancy *only* through rematerializations (pre-rescheduling).
-  /// Smaller than or equal to the target occupancy, when it is defined.
   unsigned AchievedOcc;
   /// After successful stage initialization, indicates which regions should be
   /// rescheduled.
@@ -563,6 +568,25 @@ private:
 
   /// Rematerializer.
   Rematerializer Remater;
+
+  /// State of a region pre-re-scheduling but post-rematerializations that we
+  /// must keep to be able to revert re-scheduling effects.
+  struct RegionSchedRevert {
+    /// Region number;
+    unsigned RegionIdx;
+    /// Original instruction order (both debug and non-debug MIs).
+    std::vector<MachineInstr *> OrigMIOrder;
+    /// Maximum pressure recorded in the region.
+    GCNRegPressure MaxPressure;
+
+    RegionSchedRevert(unsigned RegionIdx, ArrayRef<MachineInstr *> OrigMIOrder,
+                      const GCNRegPressure &MaxPressure)
+        : RegionIdx(RegionIdx), OrigMIOrder(OrigMIOrder),
+          MaxPressure(MaxPressure) {}
+  };
+  /// After re-scheduling, contains pre-re-scheduling data for all re-scheduled
+  /// regions.
+  SmallVector<RegionSchedRevert> RegionReverts;
 
   /// Whethre the stage will rollback its rematerialization post-rescheduling if
   /// they were useless or detrimental.
@@ -577,6 +601,9 @@ private:
   bool performInterRegionRemats(RegionsInfo &RI);
 
   bool performIntraRegionRemats(RegionsInfo &RI);
+
+  /// Returns the occupancy the stage is trying to achieve.
+  unsigned getStageTargetOccupancy() const;
 
   void removeFromLiveMaps(unsigned RegIdx, Register DefReg,
                           const BitVector &LiveIn, const BitVector &LiveOut);
@@ -595,6 +622,8 @@ public:
   bool initGCNSchedStage() override;
 
   bool initGCNRegion() override;
+
+  void finalizeGCNRegion() override;
 
   bool shouldRevertScheduling(unsigned WavesAfter) override;
 
