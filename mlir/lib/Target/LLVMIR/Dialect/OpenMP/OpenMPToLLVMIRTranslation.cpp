@@ -502,7 +502,7 @@ static LogicalResult checkImplementationStatus(Operation &op) {
             omp::AtomicCaptureOp>([&](auto op) { checkHint(op, result); })
       .Case<omp::TargetEnterDataOp, omp::TargetExitDataOp>(
           [&](auto op) { checkDepend(op, result); })
-      .Case<omp::TargetUpdateOp>([&](auto op) { checkDepend(op, result); })
+      .Case([&](omp::TargetUpdateOp op) { checkDepend(op, result); })
       .Case([&](omp::TargetOp op) {
         checkAllocate(op, result);
         checkBare(op, result);
