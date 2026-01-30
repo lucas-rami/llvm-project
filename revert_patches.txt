@@ -10,4 +10,5 @@ breaks build of aqlprofiler
 ---
 breaks oclConformance basic_types/ hiloeo
 [VectorCombine] Trim low end of loads used in shufflevector rebroadcasts. (#149093)
+[VectorCombine] Fix crash with poison mask elements in shrinkLoadForShuffles (#178920)
 --
