@@ -609,12 +609,16 @@ def binop_same_val: GICombineRule<
 >;
 
 // Fold (0 op x) - > 0
+def binop_left_to_zero_frags : GICombinePatFrag<
+  (outs root:$dst, $zero), (ins $rhs),
+  !foreach(op,
+           [G_SHL, G_LSHR, G_ASHR, G_SDIV, G_UDIV, G_SREM, G_UREM, G_MUL],
+           (pattern (G_CONSTANT $zero, 0), (op $dst, $zero, $rhs)))>;
+
 def binop_left_to_zero: GICombineRule<
-  (defs root:$root),
-  (match (wip_match_opcode G_SHL, G_LSHR, G_ASHR, G_SDIV, G_UDIV, G_SREM,
-                           G_UREM):$root,
-    [{ return Helper.matchOperandIsZero(*${root}, 1); }]),
-  (apply [{ Helper.replaceSingleDefInstWithOperand(*${root}, 1); }])
+  (defs root:$dst),
+  (match (binop_left_to_zero_frags $dst, $zero, $rhs)),
+  (apply (GIReplaceReg $dst, $zero))
 >;
 
 def urem_pow2_to_mask : GICombineRule<
@@ -1957,6 +1961,31 @@ def integer_reassoc_combines: GICombineGroup<[
   AMinusC1PlusC2
 ]>;
 
+// fold (A+(shl (0-B), C)) -> (A-(shl B, C))
+// fold ((shl (0-B), C)+A) -> (A-(shl B, C))
+def add_shl_neg_frags : GICombinePatFrag<
+  (outs root:$dst), (ins $x, $y, $n),
+  [
+    (pattern (G_CONSTANT $zero, 0),
+             (G_SUB $neg_y, $zero, $y),
+             (G_SHL $shl_neg, $neg_y, $n),
+             (G_ADD $dst, $x, $shl_neg),
+             [{ return MRI.hasOneNonDBGUse(${shl_neg}.getReg()) &&
+                       MRI.hasOneNonDBGUse(${neg_y}.getReg()); }]),
+    (pattern (G_CONSTANT $zero, 0),
+             (G_SUB $neg_y, $zero, $y),
+             (G_SHL $shl_neg, $neg_y, $n),
+             (G_ADD $dst, $shl_neg, $x),
+             [{ return MRI.hasOneNonDBGUse(${shl_neg}.getReg()) &&
+                       MRI.hasOneNonDBGUse(${neg_y}.getReg()); }])
+  ]>;
+
+def add_shift : GICombineRule<
+  (defs root:$dst),
+  (match (add_shl_neg_frags $dst, $x, $y, $n)),
+  (apply (G_SHL $new_shl, $y, $n),
+         (G_SUB $dst, $x, $new_shl))>;
+
 def freeze_of_non_undef_non_poison : GICombineRule<
    (defs root:$root),
    (match (G_FREEZE $root, $src),
@@ -2213,7 +2242,7 @@ def all_combines : GICombineGroup<[integer_reassoc_combines, trivial_combines,
     simplify_neg_minmax, combine_concat_vector,
     sext_trunc, zext_trunc, prefer_sign_combines, shuffle_combines,
     combine_use_vector_truncate, merge_combines, overflow_combines, 
-    truncsat_combines, lshr_of_trunc_of_lshr, ctls_combines]>;
+    truncsat_combines, lshr_of_trunc_of_lshr, ctls_combines, add_shift]>;
 
 // A combine group used to for prelegalizer combiners at -O0. The combines in
 // this group have been selected based on experiments to balance code size and
