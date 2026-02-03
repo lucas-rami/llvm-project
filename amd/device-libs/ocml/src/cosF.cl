@@ -23,7 +23,7 @@ MATH_MANGLE(cos)(float x)
     sc.s = -sc.s;
 
     float c =  (r.i & 1) != 0 ? sc.s : sc.c;
-    c = AS_FLOAT(AS_INT(c) ^ (r.i > 1 ? 0x80000000 : 0));
+    c = AS_FLOAT(AS_INT(c) ^ (r.i > 1 ? SIGNBIT_SP32 : 0));
 
     if (!FINITE_ONLY_OPT()) {
         c = BUILTIN_ISFINITE_F32(ax) ? c : QNAN_F32;
