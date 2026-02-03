@@ -1682,7 +1682,8 @@ void SITargetLowering::getTgtMemIntrinsic(SmallVectorImpl<IntrinsicInfo> &Infos,
         cast<MetadataAsValue>(CI.getArgOperand(ScopeIdx))->getMetadata());
     StringRef Scope = cast<MDString>(ScopeMD->getOperand(0))->getString();
     Info.ssid = Ctx.getOrInsertSyncScopeID(Scope);
-    return true;
+    Infos.push_back(Info);
+    return;
   }
   case Intrinsic::amdgcn_load_to_lds:
   case Intrinsic::amdgcn_global_load_lds: {
