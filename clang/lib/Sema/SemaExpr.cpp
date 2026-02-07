@@ -14171,6 +14171,9 @@ static bool CheckForModifiableLvalue(Expr *E, SourceLocation Loc, Sema &S) {
   case Expr::MLV_DuplicateVectorComponents:
     DiagID = diag::err_typecheck_duplicate_vector_components_not_mlvalue;
     break;
+  case Expr::MLV_DuplicateMatrixComponents:
+    DiagID = diag::err_typecheck_duplicate_matrix_components_not_mlvalue;
+    break;
   case Expr::MLV_NoSetterProperty:
     llvm_unreachable("readonly properties should be processed differently");
   case Expr::MLV_InvalidMessageExpression:
@@ -17990,6 +17993,16 @@ void Sema::PushExpressionEvaluationContextForFunction(
     else
       Current.InImmediateFunctionContext = FD->isConsteval();
   }
+}
+
+ExprResult Sema::ActOnCXXReflectExpr(SourceLocation CaretCaretLoc,
+                                     TypeSourceInfo *TSI) {
+  return BuildCXXReflectExpr(CaretCaretLoc, TSI);
+}
+
+ExprResult Sema::BuildCXXReflectExpr(SourceLocation CaretCaretLoc,
+                                     TypeSourceInfo *TSI) {
+  return CXXReflectExpr::Create(Context, CaretCaretLoc, TSI);
 }
 
 namespace {
