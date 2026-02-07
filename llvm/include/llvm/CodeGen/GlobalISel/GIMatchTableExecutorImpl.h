@@ -1067,7 +1067,7 @@ bool GIMatchTableExecutor::executeMatchTable(
     case GIR_MutateOpcode: {
       uint64_t OldInsnID = readULEB();
       uint64_t NewInsnID = readULEB();
-      uint32_t NewOpcode = readU32();
+      uint16_t NewOpcode = readU16();
       if (NewInsnID >= OutMIs.size())
         OutMIs.resize(NewInsnID + 1);
 
@@ -1088,7 +1088,7 @@ bool GIMatchTableExecutor::executeMatchTable(
     case GIR_BuildRootMI:
     case GIR_BuildMI: {
       uint64_t NewInsnID = (MatcherOpcode == GIR_BuildRootMI) ? 0 : readULEB();
-      uint32_t Opcode = readU32();
+      uint16_t Opcode = readU16();
       if (NewInsnID >= OutMIs.size())
         OutMIs.resize(NewInsnID + 1);
 
