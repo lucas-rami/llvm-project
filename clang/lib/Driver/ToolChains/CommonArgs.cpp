@@ -1863,6 +1863,8 @@ collectSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
     if (SanArgs.linkCXXRuntimes())
       StaticRuntimes.push_back("scudo_standalone_cxx");
   }
+  if (SanArgs.needsUbsanLoopDetectRt())
+    NonWholeStaticRuntimes.push_back("ubsan_loop_detect");
 }
 
 // Should be called before we add system libraries (C++ ABI, libstdc++/libc++,
