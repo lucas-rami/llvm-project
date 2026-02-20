@@ -1142,7 +1142,19 @@ private:
     else
       handleMoveUp(LR, VRegOrUnit, LaneMask);
     LLVM_DEBUG(dbgs() << "        -->\t" << LR << '\n');
-    assert(LR.verify());
+    
+    if (!LR.verify()) {
+      dbgs() << "     ";
+      if (VRegOrUnit.isVirtualReg()) {
+        dbgs() << printReg(VRegOrUnit.asVirtualReg());
+        if (LaneMask.any())
+          dbgs() << " L" << PrintLaneMask(LaneMask);
+      } else {
+        dbgs() << printRegUnit(VRegOrUnit.asMCRegUnit(), &TRI);
+      }
+      dbgs() << ":\t" << LR << '\n';
+      assert(false);
+    }
   }
 
   /// Update LR to reflect an instruction has been moved downwards from OldIdx

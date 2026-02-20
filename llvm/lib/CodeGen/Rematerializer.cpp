@@ -218,14 +218,25 @@ void Rematerializer::updateLiveIntervals() {
       Register UnrematReg = UpdateReg.DefMI->getOperand(MOIdx).getReg();
       if (!SeenUnrematRegs.insert(UnrematReg).second)
         continue;
+
+      for (MachineOperand &MO : MRI.def_operands(UnrematReg)) {
+        MachineInstr& DefMI = *MO.getParent();
+        dbgs() << "@" << LIS.getInstructionIndex(DefMI) << " def: " << DefMI;
+      }
+      for (MachineOperand &MO : MRI.use_operands(UnrematReg)) {
+        MachineInstr& DefMI = *MO.getParent();
+        dbgs() << "@" << LIS.getInstructionIndex(DefMI) << " use: " << DefMI;
+      }
+
       LIS.removeInterval(UnrematReg);
       LIS.createAndComputeVirtRegInterval(UnrematReg);
-      LLVM_DEBUG(
+      // LLVM_DEBUG(
           dbgs() << "  Re-computed interval for register "
                  << printReg(UnrematReg, &TRI,
                              UpdateReg.DefMI->getOperand(MOIdx).getSubReg(),
                              &MRI)
-                 << '\n');
+                 << '\n';
+                // );
     }
   }
   LISUpdates.clear();
@@ -331,7 +342,8 @@ void Rematerializer::deleteReg(RegisterIdx RegIdx) {
   MachineBasicBlock::iterator &RegionBegin = Regions[DeleteReg.DefRegion].first;
   if (RegionBegin == DeleteReg.DefMI)
     RegionBegin = std::next(MachineBasicBlock::iterator(DeleteReg.DefMI));
-  LIS.RemoveMachineInstrFromMaps(*DeleteReg.DefMI);
+  dbgs() << "Removing " << *DeleteReg.DefMI;
+    LIS.RemoveMachineInstrFromMaps(*DeleteReg.DefMI);
   DeleteReg.DefMI->eraseFromParent();
   DeleteReg.DefMI = nullptr;
 }
@@ -599,6 +611,8 @@ void Rematerializer::postRematerialization(
     NewDepReg.addUser(RematReg.DefMI, RematReg.DefRegion);
     LISUpdates.insert(NewDep.RegIdx);
   }
+
+  dbgs() << "Inserted " << *RematReg.DefMI;
   notifyListeners(&Listener::newRegCreated, RematRegIdx);
 }
 
