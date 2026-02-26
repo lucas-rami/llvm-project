@@ -403,6 +403,9 @@ void Rematerializer::deleteRegIfUnused(RegisterIdx RootIdx) {
 void Rematerializer::deleteReg(RegisterIdx RegIdx) {
   Reg &DeleteReg = Regs[RegIdx];
   assert(DeleteReg.DefMI && "register was already deleted");
+
+  notifyListeners(&Listener::newRegCreated, RegIdx);
+
   // It is not possible for the deleted instruction to be the upper region
   // boundary since we don't ever consider them rematerializable.
   MachineBasicBlock::iterator &RegionBegin = Regions[DeleteReg.DefRegion].first;
@@ -577,6 +580,8 @@ RegisterIdx Rematerializer::rematerializeReg(
   unsigned UseRegion = MIRegion.at(&*InsertPos);
   RegisterIdx NewRegIdx = Regs.size();
 
+  notifyListeners(&Listener::beforeRegRematerialized, RegIdx, NewRegIdx);
+
   Reg &NewReg = Regs.emplace_back();
   Reg &FromReg = Regs[RegIdx];
   NewReg.Mask = FromReg.Mask;
@@ -626,6 +631,8 @@ RegisterIdx Rematerializer::rematerializeReg(
     NewDepReg.addUser(NewReg.DefMI, UseRegion);
     LISUpdates.insert(NewDep.RegIdx);
   }
+
+  notifyListeners(&Listener::newRegCreated, NewRegIdx);
 
   LLVM_DEBUG({
     dbgs() << "** Rematerialized " << printID(RegIdx) << " as "
