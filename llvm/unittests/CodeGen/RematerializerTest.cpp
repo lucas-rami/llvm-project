@@ -80,8 +80,7 @@ public:
     MAM.registerPass([&] { return MachineModuleAnalysis(*MMI); });
   }
 
-  bool parseMIRAndInit(StringRef MIRCode, StringRef FunName,
-                       bool SupportRollback) {
+  bool parseMIRAndInit(StringRef MIRCode, StringRef FunName) {
     SMDiagnostic Diagnostic;
     std::unique_ptr<MemoryBuffer> MBuffer = MemoryBuffer::getMemBuffer(MIRCode);
     MIR = createMIRParser(std::move(MBuffer), Context);
@@ -122,7 +121,7 @@ public:
     }
 
     Remater = std::make_unique<Rematerializer>(*MF, *Regions, LIS);
-    Remater->analyze(SupportRollback);
+    Remater->analyze();
     return true;
   }
 
@@ -197,10 +196,11 @@ body:             |
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(
-      parseMIRAndInit(MIR, "TreeRematRollback", /*SupportRollback=*/true));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "TreeRematRollback"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
+  RollbackerListener Rollback;
+  Remater.withListener(&Rollback);
 
   // MBB/Region indices.
   const unsigned MBB0 = 0, MBB1 = 1;
@@ -218,24 +218,21 @@ body:             |
     Remater.rematerializeToRegion(/*RootIdx=*/Add23, /*UseRegion=*/MBB1, DRI);
     Remater.updateLiveIntervals();
 
-    // None of the original registers have any users, but they still are in the
-    // MIR because we enabled rollback support.
-    EXPECT_NO_USERS(Cst0);
-    EXPECT_NO_USERS(Cst1);
-    EXPECT_NO_USERS(Add01);
-    EXPECT_NO_USERS(Cst3);
-    EXPECT_NO_USERS(Add23);
+    // All of the original registers are moved, no new register is created.
+    EXPECT_NUM_USERS(Cst0, 1);
+    EXPECT_NUM_USERS(Cst1, 1);
+    EXPECT_NUM_USERS(Add01, 1);
+    EXPECT_NUM_USERS(Cst3, 1);
+    EXPECT_NUM_USERS(Add23, 1);
 
-    // Copies of all MIs were inserted into the second MBB.
+    RegionSizes[MBB0] -= 5;
     RegionSizes[MBB1] += 5;
     ASSERT_REGION_SIZES(RegionSizes);
-    NumRegs += 5;
     ASSERT_EQ(Remater.getNumRegs(), NumRegs);
   }
 
-  // After rollback all rematerializations are removed from the MIR.
-  Remater.rollbackRematsOf(Add23);
-  RegionSizes[MBB1] -= 5;
+  // Rolling back just moves back all MIs to their original position.
+  Rollback.rollback(Remater);
   ASSERT_REGION_SIZES(RegionSizes);
 
   // Rematerialize Add23 only with its direct dependencies, reuse the rest.
@@ -260,7 +257,7 @@ body:             |
   }
 
   // After rollback all rematerializations are removed from the MIR.
-  Remater.rollbackRematsOf(Add23);
+  Rollback.rollback(Remater);
   RegionSizes[MBB1] -= 3;
   ASSERT_REGION_SIZES(RegionSizes);
 
@@ -271,7 +268,7 @@ body:             |
 
     DRI.clear().reuse(Cst0).reuse(Cst1);
     const RegisterIdx RematAdd01 =
-        Remater.rematerializeToPos(/*RootIdx=*/Add01, NopMI, DRI);
+        Remater.rematerializeToPos(/*RootIdx=*/Add01, MBB1, NopMI, DRI);
     // This adds an additional user to the used constants, and does not change
     // existing users for the original register.
     EXPECT_NO_USERS(RematAdd01);
@@ -281,14 +278,14 @@ body:             |
 
     DRI.clear();
     const RegisterIdx RematCst3 =
-        Remater.rematerializeToPos(/*RootIdx=*/Cst3, NopMI, DRI);
+        Remater.rematerializeToPos(/*RootIdx=*/Cst3, MBB1, NopMI, DRI);
     // This does not change existing users for the original register.
     EXPECT_NO_USERS(RematCst3);
     EXPECT_NUM_USERS(Cst3, 1);
 
     DRI.clear().useRemat(Add01, RematAdd01).useRemat(Cst3, RematCst3);
     const RegisterIdx RematAdd23 =
-        Remater.rematerializeToPos(/*RootIdx=*/Add23, NopMI, DRI);
+        Remater.rematerializeToPos(/*RootIdx=*/Add23, MBB1, NopMI, DRI);
     // This adds a user to used rematerializations, and does not change existing
     // users for the original register.
     EXPECT_NO_USERS(RematAdd23);
@@ -298,7 +295,7 @@ body:             |
 
     // Finally transfer the NOP user from the original to the rematerialized
     // register.
-    Remater.transferUser(Add23, RematAdd23, *NopMI);
+    Remater.transferUser(Add23, MBB1, RematAdd23, *NopMI);
     EXPECT_NO_USERS(Add23);
     EXPECT_NUM_USERS(RematAdd23, 1);
 
@@ -312,7 +309,6 @@ body:             |
   // deletes unused registers in the first block. However the number of
   // registers tracked by the rematerializer doesn't change.
   Remater.updateLiveIntervals();
-  Remater.commitRematerializations();
   RegionSizes[MBB0] -= 3;
   ASSERT_REGION_SIZES(RegionSizes);
   ASSERT_EQ(Remater.getNumRegs(), NumRegs);
@@ -345,8 +341,7 @@ body:             |
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(
-      parseMIRAndInit(MIR, "MultiRegionsRemat", /*SupportRollback=*/false));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "MultiRegionsRemat"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
 
@@ -416,7 +411,7 @@ body:             |
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(parseMIRAndInit(MIR, "MultiStep", /*SupportRollback=*/false));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "MultiStep"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
 
@@ -497,7 +492,7 @@ body:             |
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(parseMIRAndInit(MIR, "EmptyRegion", /*SupportRollback=*/false));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "EmptyRegion"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
 
@@ -526,10 +521,10 @@ body:             |
   // to the region terminator (S_BRANCH), which is a valid position to insert
   // before. We couldn't move them to bb.1 however, since after %2 is
   // rematerialized there is no MI left to reference inside the region.
-  RegisterIdx RematCst0 =
-      Remater.rematerializeToPos(/*RootIdx=*/Cst0, (*Regions)[MBB2].first, DRI);
-  RegisterIdx RematCst1 =
-      Remater.rematerializeToPos(/*RootIdx=*/Cst1, (*Regions)[MBB2].first, DRI);
+  RegisterIdx RematCst0 = Remater.rematerializeToPos(
+      /*RootIdx=*/Cst0, MBB2, (*Regions)[MBB2].first, DRI);
+  RegisterIdx RematCst1 = Remater.rematerializeToPos(
+      /*RootIdx=*/Cst1, MBB2, (*Regions)[MBB2].first, DRI);
   Remater.transferRegionUsers(Cst0, RematCst0, MBB3);
   Remater.transferRegionUsers(Cst1, RematCst1, MBB3);
   RegionSizes[MBB0] -= 2;
@@ -564,7 +559,7 @@ body:             |
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(parseMIRAndInit(MIR, "SubReg", /*SupportRollback=*/false));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "SubReg"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
 
