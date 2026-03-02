@@ -80,8 +80,7 @@ public:
     MAM.registerPass([&] { return MachineModuleAnalysis(*MMI); });
   }
 
-  bool parseMIRAndInit(StringRef MIRCode, StringRef FunName,
-                       bool SupportRollback) {
+  bool parseMIRAndInit(StringRef MIRCode, StringRef FunName) {
     SMDiagnostic Diagnostic;
     std::unique_ptr<MemoryBuffer> MBuffer = MemoryBuffer::getMemBuffer(MIRCode);
     MIR = createMIRParser(std::move(MBuffer), Context);
@@ -122,7 +121,7 @@ public:
     }
 
     Remater = std::make_unique<Rematerializer>(*MF, *Regions, LIS);
-    Remater->analyze(SupportRollback);
+    Remater->analyze();
     return true;
   }
 
@@ -197,10 +196,11 @@ body:             |
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(
-      parseMIRAndInit(MIR, "TreeRematRollback", /*SupportRollback=*/true));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "TreeRematRollback"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
+  RollbackerListener Rollback;
+  Remater.withListener(&Rollback);
 
   // MBB/Region indices.
   const unsigned MBB0 = 0, MBB1 = 1;
@@ -218,15 +218,16 @@ body:             |
     Remater.rematerializeToRegion(/*RootIdx=*/Add23, /*UseRegion=*/MBB1, DRI);
     Remater.updateLiveIntervals();
 
-    // None of the original registers have any users, but they still are in the
-    // MIR because we enabled rollback support.
+    // None of the original registers have any users left.
     EXPECT_NO_USERS(Cst0);
     EXPECT_NO_USERS(Cst1);
     EXPECT_NO_USERS(Add01);
     EXPECT_NO_USERS(Cst3);
     EXPECT_NO_USERS(Add23);
 
-    // Copies of all MIs were inserted into the second MBB.
+    // Copies of all MIs were inserted into the second MBB. Original registers
+    // were deleted.
+    RegionSizes[MBB0] -= 5;
     RegionSizes[MBB1] += 5;
     ASSERT_REGION_SIZES(RegionSizes);
     NumRegs += 5;
@@ -234,7 +235,8 @@ body:             |
   }
 
   // After rollback all rematerializations are removed from the MIR.
-  Remater.rollbackRematsOf(Add23);
+  Rollback.rollback(Remater);
+  RegionSizes[MBB0] += 5;
   RegionSizes[MBB1] -= 5;
   ASSERT_REGION_SIZES(RegionSizes);
 
@@ -253,6 +255,7 @@ body:             |
     EXPECT_NO_USERS(Add23);
 
     // Only immediate dependencies are copied to the second MBB.
+    RegionSizes[MBB0] -= 3;
     RegionSizes[MBB1] += 3;
     ASSERT_REGION_SIZES(RegionSizes);
     NumRegs += 3;
@@ -260,7 +263,8 @@ body:             |
   }
 
   // After rollback all rematerializations are removed from the MIR.
-  Remater.rollbackRematsOf(Add23);
+  Rollback.rollback(Remater);
+  RegionSizes[MBB0] += 3;
   RegionSizes[MBB1] -= 3;
   ASSERT_REGION_SIZES(RegionSizes);
 
@@ -302,21 +306,15 @@ body:             |
     EXPECT_NO_USERS(Add23);
     EXPECT_NUM_USERS(RematAdd23, 1);
 
+    RegionSizes[MBB0] -= 3;
     RegionSizes[MBB1] += 3;
     ASSERT_REGION_SIZES(RegionSizes);
     NumRegs += 3;
     ASSERT_EQ(Remater.getNumRegs(), NumRegs);
   }
 
-  // This time don't rollback; commit the rematerializations. This finally
-  // deletes unused registers in the first block. However the number of
-  // registers tracked by the rematerializer doesn't change.
+  // This time don't rollback.
   Remater.updateLiveIntervals();
-  Remater.commitRematerializations();
-  RegionSizes[MBB0] -= 3;
-  ASSERT_REGION_SIZES(RegionSizes);
-  ASSERT_EQ(Remater.getNumRegs(), NumRegs);
-
   EXPECT_TRUE(getMF().verify());
 }
 
@@ -345,8 +343,7 @@ body:             |
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(
-      parseMIRAndInit(MIR, "MultiRegionsRemat", /*SupportRollback=*/false));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "MultiRegionsRemat"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
 
@@ -416,7 +413,7 @@ body:             |
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(parseMIRAndInit(MIR, "MultiStep", /*SupportRollback=*/false));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "MultiStep"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
 
@@ -497,7 +494,7 @@ body:             |
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(parseMIRAndInit(MIR, "EmptyRegion", /*SupportRollback=*/false));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "EmptyRegion"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
 
@@ -566,7 +563,7 @@ body:             |
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(parseMIRAndInit(MIR, "SubReg", /*SupportRollback=*/false));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "SubReg"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
 
