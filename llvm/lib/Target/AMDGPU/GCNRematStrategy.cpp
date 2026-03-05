@@ -127,7 +127,7 @@ private:
   /// rematerialization is useless.
   bool hasNullScore() const { return !RegionImpact; }
 
-  bool makeRematPlan(const Rematerializer &Remater);
+  bool makeRematPlan(const Rematerializer &Remater, const LiveIntervals &LIS);
 
   void computeRegionDependencies(unsigned UseRegion, SlotIndex Use,
                                  const Rematerializer &Remater);
@@ -157,8 +157,7 @@ Candidate::Candidate(unsigned RootIdx, bool SkipLiveCheck,
   // Maximum RP can decrease or stay the same in regions where the register is
   // live. In regions where it is used or is not a live-through RP may not
   // decrease.
-  const MachineRegisterInfo &MRI = Remater.getMachineRegisterInfo();
-  Save.inc(DefReg, LaneBitmask::getNone(), RootReg.Mask, MRI);
+  Save.inc(DefReg, LaneBitmask::getNone(), RootReg.Mask, Strat.MRI);
   for (unsigned I : Live.set_bits()) {
     if (!LiveIn[I] || !LiveOut[I] || RootReg.Uses.contains(I))
       ApproximateDiff.set(I);
@@ -185,7 +184,7 @@ void Candidate::rematerialize(Rematerializer &Remater) {
 bool Candidate::update(bool RematForSpillAvoidance,
                        const RematAcrossForRPTarget &Strat) {
   const Rematerializer &Remater = Strat.getRematerializer();
-  if (!makeRematPlan(Remater))
+  if (!makeRematPlan(Remater, Strat.LIS))
     return false;
   const Rematerializer::Reg &RootReg = Remater.getReg(RootIdx);
 
@@ -218,7 +217,7 @@ bool Candidate::update(bool RematForSpillAvoidance,
     // register class with usage above the RP target for this region to
     // contribute to the score.
     const GCNRPTarget &RegionTarget = Strat.getTarget(RegionIdx);
-    const unsigned NetSave = RegionTarget.getTotalNetBeneficialSave(Save);
+    const unsigned NetSave = RegionTarget.getNumRegsBenefit(Save);
     if (!NetSave)
       continue;
     BeneficialRegions.set(RegionIdx);
@@ -310,7 +309,8 @@ bool Candidate::operator<(const Candidate &O) const {
   return RootIdx > O.RootIdx;
 }
 
-bool Candidate::makeRematPlan(const Rematerializer &Remater) {
+bool Candidate::makeRematPlan(const Rematerializer &Remater,
+                              const LiveIntervals &LIS) {
   Remats.clear();
   LRExtensions.clear();
   const Rematerializer::Reg &RootReg = Remater.getReg(RootIdx);
@@ -318,7 +318,6 @@ bool Candidate::makeRematPlan(const Rematerializer &Remater) {
     return false;
 
   // Collect all slots where the register would be rematerialized to.
-  const LiveIntervals &LIS = Remater.getLiveIntervals();
   for (const auto &[UseRegion, RegionUses] : RootReg.Uses) {
     if (UseRegion == RootReg.DefRegion)
       continue;
@@ -417,8 +416,9 @@ RematAcrossForRPTarget::RematAcrossForRPTarget(
     bool SupportRollback, const MachineLoopInfo &MLI,
     SmallVectorImpl<GCNRPTracker::LiveRegSet> &LiveIns,
     SmallVectorImpl<GCNRPTracker::LiveRegSet> &LiveOuts)
-    : MF(MF), SupportRollback(SupportRollback), Remater(MF, Regions, LIS),
-      TargetRegions(Regions.size()), LiveIns(LiveIns), LiveOuts(LiveOuts) {
+    : MF(MF), MRI(MF.getRegInfo()), LIS(LIS), SupportRollback(SupportRollback),
+      Remater(MF, Regions, LIS), TargetRegions(Regions.size()),
+      LiveIns(LiveIns), LiveOuts(LiveOuts) {
 
   const unsigned NumRegions = Remater.getNumRegions();
   assert(LiveIns.size() == NumRegions && "mismatch in number of regions");
@@ -460,7 +460,7 @@ RematAcrossForRPTarget::RematAcrossForRPTarget(
     Freq /= MinFreq;
   MaxFreq /= MinFreq;
 
-  Remater.analyze(SupportRollback);
+  Remater.analyze();
 }
 
 bool RematAcrossForRPTarget::performRematerializations(
@@ -498,7 +498,7 @@ bool RematAcrossForRPTarget::performRematerializations(
 
   if (SupportRollback) {
     Rollback = std::make_unique<Rollbacker>();
-    Remater.addListener(Rollback.get_ptr());
+    Remater.addListener(Rollback.get());
   }
 
   // Rematerialize registers in successive rounds until all RP targets are
@@ -630,7 +630,8 @@ bool RematAcrossForRPTarget::performRematerializations(
 }
 
 void RematAcrossForRPTarget::rollbackRematerializations() {
-  Rollback->rollback();
+  LLVM_DEBUG(dbgs() << "Rollback!\n");
+  Rollback->rollback(Remater);
   for (const auto &[RegIdx, Liveness] : RemovedFromLiveMaps) {
     const Rematerializer::Reg &Reg = Remater.getReg(RegIdx);
     addToLiveMaps(Reg.getDefReg(), Reg.Mask, Liveness.first, Liveness.second);
@@ -738,9 +739,8 @@ GCNRegPressure
 RematAcrossForRPTarget::getRealRegPressure(unsigned RegionIdx) const {
   const auto [RegionStart, RegionEnd] = Remater.getRegion(RegionIdx);
   if (RegionStart == RegionEnd)
-    return llvm::getRegPressure(Remater.getMachineRegisterInfo(),
-                                LiveIns[RegionIdx]);
-  GCNDownwardRPTracker RPTracker(Remater.getLiveIntervals());
+    return llvm::getRegPressure(MRI, LiveIns[RegionIdx]);
+  GCNDownwardRPTracker RPTracker(LIS);
   RPTracker.advance(RegionStart, RegionEnd, &LiveIns[RegionIdx]);
   return RPTracker.moveMaxPressure();
 }
@@ -793,7 +793,6 @@ Printable RematAcrossForRPTarget::printTargetRegions() const {
     const SIMachineFunctionInfo &MFI = *MF.getInfo<SIMachineFunctionInfo>();
     const unsigned VGPRBlockSize = MFI.getDynamicVGPRBlockSize();
     const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
-    const MachineRegisterInfo &MRI = Remater.getMachineRegisterInfo();
 
     dbgs() << "Target regions are:\n";
     for (unsigned I : TargetRegions.set_bits()) {

@@ -13,6 +13,7 @@
 #include "GCNRegPressure.h"
 #include "GCNSubtarget.h"
 #include "SIMachineFunctionInfo.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Rematerializer.h"
 
 namespace llvm {
@@ -21,6 +22,10 @@ using RegionBoundaries = Rematerializer::RegionBoundaries;
 
 class RematAcrossForRPTarget final {
 public:
+  const MachineFunction &MF;
+  const MachineRegisterInfo &MRI;
+  const LiveIntervals& LIS;
+
   RematAcrossForRPTarget(MachineFunction &MF,
                          SmallVectorImpl<RegionBoundaries> &Regions,
                          LiveIntervals &LIS, unsigned MaxSGPRs,
@@ -31,8 +36,6 @@ public:
 
   bool performRematerializations(BitVector &AffectedRegions,
                                  bool RematForSpillAvoidance);
-
-  void commitRematerializations();
 
   void rollbackRematerializations();
 
@@ -77,15 +80,13 @@ public:
   }
 
   inline uint64_t getFrequencyOrMax(unsigned RegionIdx) const {
-    return getFrequencyOrDefault(MaxFreq);
+    return getFrequencyOrDefault(RegionIdx, MaxFreq);
   }
 
   Printable printTargetRegions() const;
 
 private:
   using RegisterIdx = Rematerializer::RegisterIdx;
-
-  const MachineFunction &MF;
   const bool SupportRollback;
 
   /// Rematerializer.
@@ -114,7 +115,7 @@ private:
   DenseMap<unsigned, std::pair<BitVector, BitVector>> RemovedFromLiveMaps;
 
   void updateRegionBounds(unsigned RegionIdx);
-  
+
   /// Clears target regions in \p Regions whose RP target has been reached.
   /// Returns whether any target region was cleared.
   bool clearIfSatisfied(const BitVector &Regions);
@@ -124,7 +125,6 @@ private:
   /// satisfied but are actually not, and returns whether there were any such
   /// regions.
   bool verify(const BitVector &Regions);
-
 
   void removeFromLiveMaps(RegisterIdx RegIdx, Register DefReg,
                           const BitVector &LiveIn, const BitVector &LiveOut);
