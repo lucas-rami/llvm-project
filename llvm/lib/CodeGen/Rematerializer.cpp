@@ -205,6 +205,9 @@ void Rematerializer::updateLiveIntervals() {
     Register DefReg = UpdateReg.getDefReg();
     if (LIS.hasInterval(DefReg))
       LIS.removeInterval(DefReg);
+    // Rematerializable registers have a single definition by construction so
+    // re-creating their interval cannot yield a live interval with multiple
+    // connected components.
     LIS.createAndComputeVirtRegInterval(DefReg);
 
     LLVM_DEBUG({
@@ -219,7 +222,19 @@ void Rematerializer::updateLiveIntervals() {
       if (!SeenUnrematRegs.insert(UnrematReg).second)
         continue;
       LIS.removeInterval(UnrematReg);
-      LIS.createAndComputeVirtRegInterval(UnrematReg);
+      bool NeedSplit = false;
+
+      // Unrematerializable registers may end up with multiple connected
+      // components in their live interval after it is re-created. It needs to
+      // be split in such cases. We don't track unrematerializable registers by
+      // their actual value (just by operand index) so we do not need to update
+      // any rematerializer state.
+      LiveInterval &LI =
+          LIS.createAndComputeVirtRegInterval(UnrematReg, NeedSplit);
+      if (NeedSplit) {
+        SmallVector<LiveInterval *> SplitLIs;
+        LIS.splitSeparateComponents(LI, SplitLIs);
+      }
       LLVM_DEBUG(
           dbgs() << "  Re-computed interval for register "
                  << printReg(UnrematReg, &TRI,

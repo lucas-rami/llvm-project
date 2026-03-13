@@ -98,8 +98,8 @@ bool LiveIntervalsWrapperPass::runOnMachineFunction(MachineFunction &MF) {
 
 #ifndef NDEBUG
 static cl::opt<bool> EnablePrecomputePhysRegs(
-  "precompute-phys-liveness", cl::Hidden,
-  cl::desc("Eagerly compute live intervals for all physreg units."));
+    "precompute-phys-liveness", cl::Hidden,
+    cl::desc("Eagerly compute live intervals for all physreg units."));
 #else
 static bool EnablePrecomputePhysRegs = false;
 #endif // NDEBUG
@@ -392,7 +392,7 @@ void LiveIntervals::computeLiveInRegUnits() {
 }
 
 static void createSegmentsForValues(LiveRange &LR,
-    iterator_range<LiveInterval::vni_iterator> VNIs) {
+                        iterator_range<LiveInterval::vni_iterator> VNIs) {
   for (VNInfo *VNI : VNIs) {
     if (VNI->isUnused())
       continue;
@@ -853,7 +853,7 @@ void LiveIntervals::addKillFlags(const VirtRegMap *VRM) {
 
       MI->addRegisterKilled(Reg, nullptr);
       continue;
-CancelKill:
+    CancelKill:
       MI->clearRegisterKills(Reg, nullptr);
     }
   }
@@ -984,14 +984,14 @@ bool LiveIntervals::checkRegMaskInterference(const LiveInterval &LI,
   bool Found = false;
   // Utility to union regmasks.
   auto unionBitMask = [&](unsigned Idx) {
-      if (!Found) {
-        // This is the first overlap. Initialize UsableRegs to all ones.
-        UsableRegs.clear();
-        UsableRegs.resize(TRI->getNumRegs(), true);
-        Found = true;
-      }
-      // Remove usable registers clobbered by this mask.
-      UsableRegs.clearBitsNotInMask(Bits[Idx]);
+    if (!Found) {
+      // This is the first overlap. Initialize UsableRegs to all ones.
+      UsableRegs.clear();
+      UsableRegs.resize(TRI->getNumRegs(), true);
+      Found = true;
+    }
+    // Remove usable registers clobbered by this mask.
+    UsableRegs.clearBitsNotInMask(Bits[Idx]);
   };
   while (true) {
     assert(*SlotI >= LiveI->start);
@@ -1039,8 +1039,8 @@ public:
   HMEditor(LiveIntervals& LIS, const MachineRegisterInfo& MRI,
            const TargetRegisterInfo& TRI,
            SlotIndex OldIdx, SlotIndex NewIdx, bool UpdateFlags)
-    : LIS(LIS), MRI(MRI), TRI(TRI), OldIdx(OldIdx), NewIdx(NewIdx),
-      UpdateFlags(UpdateFlags) {}
+      : LIS(LIS), MRI(MRI), TRI(TRI), OldIdx(OldIdx), NewIdx(NewIdx),
+        UpdateFlags(UpdateFlags) {}
 
   // FIXME: UpdateFlags is a workaround that creates live intervals for all
   // physregs, even those that aren't needed for regalloc, in order to update
@@ -1177,7 +1177,7 @@ private:
         // If we are here then OldIdx was just a use but not a def. We only have
         // to ensure liveness extends to NewIdx.
         LiveRange::iterator NewIdxIn =
-          LR.advanceTo(Next, NewIdx.getBaseIndex());
+            LR.advanceTo(Next, NewIdx.getBaseIndex());
         // Extend the segment before NewIdx if necessary.
         if (NewIdxIn == E ||
             !SlotIndex::isEarlierInstr(NewIdxIn->start, NewIdx)) {
@@ -1534,7 +1534,7 @@ private:
     // point to the next instruction after OldIdx, or MBB->end().
     MachineBasicBlock::iterator MII = MBB->end();
     if (MachineInstr *MI = Indexes->getInstructionFromIndex(
-                           Indexes->getNextNonNullIndex(OldIdx)))
+            Indexes->getNextNonNullIndex(OldIdx)))
       if (MI->getParent() == MBB)
         MII = MI;
 
@@ -1701,9 +1701,9 @@ void LiveIntervals::repairOldRegInRange(const MachineBasicBlock::iterator Begin,
 
 void
 LiveIntervals::repairIntervalsInRange(MachineBasicBlock *MBB,
-                                      MachineBasicBlock::iterator Begin,
-                                      MachineBasicBlock::iterator End,
-                                      ArrayRef<Register> OrigRegs) {
+                                           MachineBasicBlock::iterator Begin,
+                                           MachineBasicBlock::iterator End,
+                                           ArrayRef<Register> OrigRegs) {
   // Find anchor points, which are at the beginning/end of blocks or at
   // instructions that already have indexes.
   while (Begin != MBB->begin() && !Indexes->hasIndex(*std::prev(Begin)))
