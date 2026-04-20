@@ -286,7 +286,7 @@ public:
        << " SGPRs, " << Target.RP.getArchVGPRNum() << '/' << Target.MaxVGPRs
        << " ArchVGPRs, " << Target.RP.getAGPRNum() << '/' << Target.MaxVGPRs
        << " AGPRs";
-
+ 
     if (Target.MaxUnifiedVGPRs) {
       OS << ", " << Target.RP.getVGPRNum(true) << '/' << Target.MaxUnifiedVGPRs
          << " VGPRs (unified)";

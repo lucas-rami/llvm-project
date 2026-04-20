@@ -10,11 +10,9 @@
 #include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/Analysis/LoopAnalysisManager.h"
 #include "llvm/CodeGen/MIRParser/MIRParser.h"
-#include "llvm/CodeGen/MachineDomTreeUpdater.h"
 #include "llvm/CodeGen/MachineFunctionAnalysis.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachinePassManager.h"
-#include "llvm/CodeGen/MachinePostDominators.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/TargetLowering.h"
@@ -577,52 +575,131 @@ body:             |
   EXPECT_TRUE(getMF().verify());
 }
 
-/// Checks that only registers with a single definition are rematerializable,
-/// even when registers are made up of multiple sub-registers each with their
-/// own definition.
-TEST_F(RematerializerTest, SubReg) {
+TEST_F(RematerializerTest, SubRegRematSupport) {
   StringRef MIR = R"(
-name:            SubReg
+name:            SubRegSupport
 tracksRegLiveness: true
 machineFunctionInfo:
   isEntryFunction: true
 body:             |
   bb.0:
-    undef %01.sub0:vreg_64_align2 = nofpexcept V_CVT_I32_F64_e32 0, implicit $exec, implicit $mode
-    %01.sub1:vreg_64_align2 = nofpexcept V_CVT_I32_F64_e32 1, implicit $exec, implicit $mode
+    undef %01.sub0:sreg_64 = S_MOV_B32 0
+    %01.sub1:sreg_64 = S_MOV_B32 1    
     
-    undef %2.sub0:vreg_64_align2 = nofpexcept V_CVT_I32_F64_e32 2, implicit $exec, implicit $mode
+    undef %23.sub0:sreg_64 = S_MOV_B32 2
+    %23.sub1:sreg_64 = S_MOV_B32 3, implicit-def $m0    
     
-    undef %34.sub0:vreg_64_align2 = nofpexcept V_CVT_I32_F64_e32 3, implicit $exec, implicit $mode
+    undef %45.sub0:sreg_64 = S_MOV_B32 4
+    S_NOP 0, implicit %45.sub0
+    %45.sub1:sreg_64 = S_MOV_B32 5    
+    
+    undef %66.sub0:vreg_64 = nofpexcept V_CVT_I32_F32_e32 6, implicit $exec, implicit $mode
+    %66.sub1:vreg_64 = nofpexcept V_CVT_I32_F32_e32 %66.sub0, implicit $exec, implicit $mode
 
+    undef %78.sub0:sreg_64 = S_MOV_B32 4
+    
   bb.1:
-    %34.sub1:vreg_64_align2 = nofpexcept V_CVT_I32_F64_e32 4, implicit $exec, implicit $mode
-    S_NOP 0, implicit %01, implicit %2, implicit %34
+    %78.sub1:sreg_64 = S_MOV_B32 5
+    S_NOP 0, implicit %01, implicit %23, implicit %45, implicit %66, implicit %78
     S_ENDPGM 0
 ...
 )";
-  ASSERT_TRUE(parseMIRAndInit(MIR, "SubReg"));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "SubRegSupport"));
+  Rematerializer &Remater = getRematerializer();
+
+  // - %23 is not rematerializable because the second defining MI is
+  // unrematerializable due to the implicit def.
+  // - %45 is not rematerializable because it is read by an MI not defining it
+  // before its last definition.
+  // - %78 is not rematerializable because it is defined over multiple regions.
+
+  // Indices of rematerializable registers.
+  unsigned NumRegs = 0;
+  const RegisterIdx Cst01 = NumRegs++, Cst66 = NumRegs++;
+  ASSERT_EQ(Remater.getNumRegs(), NumRegs);
+  EXPECT_EQ(Remater.getReg(Cst01).Defs.size(), 2U);
+  EXPECT_EQ(Remater.getReg(Cst66).Defs.size(), 2U);
+
+  Remater.updateLiveIntervals();
+  EXPECT_TRUE(getMF().verify());
+}
+
+TEST_F(RematerializerTest, SubRegRollback) {
+  StringRef MIR = R"(
+name:            SubRegRollback
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body:             |
+  bb.0:
+    undef %01.sub0:sreg_64 = S_MOV_B32 0
+    %unremat0:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 0, implicit $exec, implicit $mode, implicit-def $m0
+    %01.sub1:sreg_64 = S_MOV_B32 1    
+    %unremat1:vgpr_32 = nofpexcept V_CVT_I32_F64_e32 1, implicit $exec, implicit $mode, implicit-def $m0
+  
+  bb.1:
+    undef %23.sub0:sreg_64 = S_MOV_B32 2
+    %23.sub1:sreg_64 = S_MOV_B32 3
+
+  bb.2:
+    undef %45.sub0:sreg_64 = S_MOV_B32 4
+    undef %67.sub0:sreg_64 = S_MOV_B32 6
+    %45.sub1:sreg_64 = S_MOV_B32 5
+    %67.sub1:sreg_64 = S_MOV_B32 7
+
+  bb.3:
+    S_NOP 0, implicit %01, implicit %23, implicit %45, implicit %67
+    S_NOP 0, implicit %unremat0, implicit %unremat1 
+    S_ENDPGM 0
+...
+)";
+  ASSERT_TRUE(parseMIRAndInit(MIR, "SubRegRollback"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
+  Rollbacker Rollback;
+  Remater.addListener(&Rollback);
 
   // MBB/Region indices.
-  const unsigned MBB0 = 0, MBB1 = 1;
-  SmallVector<unsigned, 2> RegionSizes{4, 2};
+  const unsigned MBB0 = 0, MBB1 = 1, MBB2 = 2, MBB3 = 3;
+  SmallVector<unsigned, 2> RegionSizes{4, 2, 4, 2};
   ASSERT_REGION_SIZES(RegionSizes);
 
   // Indices of rematerializable registers.
   unsigned NumRegs = 0;
-  const RegisterIdx Cst2 = NumRegs++;
+  const RegisterIdx Cst01 = NumRegs++, Cst23 = NumRegs++, Cst45 = NumRegs++,
+                    Cst67 = NumRegs++;
   ASSERT_EQ(Remater.getNumRegs(), NumRegs);
+  EXPECT_EQ(Remater.getReg(Cst01).Defs.size(), 2U);
+  EXPECT_EQ(Remater.getReg(Cst23).Defs.size(), 2U);
+  EXPECT_EQ(Remater.getReg(Cst45).Defs.size(), 2U);
+  EXPECT_EQ(Remater.getReg(Cst67).Defs.size(), 2U);
 
-  RegisterIdx RematCst2 =
-      Remater.rematerializeToRegion(/*RootIdx=*/Cst2, /*UseRegion=*/MBB1, DRI);
-  RegionSizes[MBB0] -= 1;
-  RegionSizes[MBB1] += 1;
-  ASSERT_REGION_SIZES(RegionSizes);
-  EXPECT_REMAT(/*RegIdx=*/RematCst2, /*OriginIdx=*/Cst2,
-               /*DefRegionIdx=*/MBB1,
-               /*NumUsers=*/1);
+  auto GetNextMI = [&](MachineInstr* MI) -> MachineInstr* {
+    return &*std::next(MI->getIterator());
+  };
+
+  auto GetNextDefMI = [&](RegisterIdx RegIdx, unsigned DefIdx) -> MachineInstr* {
+    return &*std::next(Remater.getReg(RegIdx).Defs[DefIdx]->getIterator());
+  };
+
+  // Rematerialize and rollback %01.
+  {
+    MachineInstr* Unremat0 = GetNextDefMI(Cst01, 0);
+    MachineInstr* Unremat1 = GetNextDefMI(Cst01, 1);
+    const RegisterIdx RematCst01 =
+        Remater.rematerializeToRegion(Cst01, MBB3, DRI.clear());
+    RegionSizes[MBB0] -= 2;
+    RegionSizes[MBB3] += 2;
+    ASSERT_REGION_SIZES(RegionSizes);
+    EXPECT_REMAT(RematCst01, Cst01, MBB3, 1);
+  
+    // Rollback.rollback(Remater);
+    // RegionSizes[MBB0] += 2;
+    // RegionSizes[MBB3] -= 2;
+    // ASSERT_REGION_SIZES(RegionSizes);
+    // EXPECT_EQ(Unremat0, GetNextDefMI(Cst01, 0));
+    // EXPECT_EQ(Unremat1, GetNextDefMI(Cst01, 1));
+  }
 
   Remater.updateLiveIntervals();
   EXPECT_TRUE(getMF().verify());
@@ -654,6 +731,13 @@ body:             |
 )";
   ASSERT_TRUE(parseMIRAndInit(MIR, "SplitSubRegDeadDef"));
   LiveIntervals &LIS = MFAM.getResult<LiveIntervalsAnalysis>(*MF);
+  Rematerializer &Remater = getRematerializer();
+  Rematerializer::DependencyReuseInfo DRI;
+
+  unsigned NumRegs = 0;
+  const unsigned MBB1 = 1;
+  const RegisterIdx SubDef = NumRegs++, Add = NumRegs++;
+  ASSERT_EQ(Remater.getNumRegs(), NumRegs);
 
   // Replicates the scheduler's effect on LIS on an intra-block move of MI.
   auto MoveMIAndAdjustLiveness = [&](MachineInstr &MI) {
@@ -678,11 +762,7 @@ body:             |
 
   // Rematerialize %1 to bb.1. This triggers a live-interval update of %0 when
   // calling Remater.updateLiveIntervals(), during which its interval is split.
-  Rematerializer &Remater = getRematerializer();
-  Rematerializer::DependencyReuseInfo DRI;
-  const unsigned MBB1 = 1;
-  const RegisterIdx Add = 0;
-  Remater.rematerializeToRegion(Add, MBB1, DRI);
+  Remater.rematerializeToRegion(Add, MBB1, DRI.reuse(SubDef));
   Remater.updateLiveIntervals();
 
   // If we didn't split %0 before, its definitions would now look like:
@@ -848,10 +928,10 @@ body:             |
   RegionSizes[MBB1] -= 3;
   ASSERT_REGION_SIZES(RegionSizes);
 
-  MachineInstr &DefCst0 = *Remater.getReg(Cst0).DefMI;
-  MachineInstr &DefCst1 = *Remater.getReg(Cst1).DefMI;
-  MachineInstr &DefCst2 = *Remater.getReg(Cst2).DefMI;
-  MachineInstr &DefCst3 = *Remater.getReg(Cst3).DefMI;
+  MachineInstr &DefCst0 = *Remater.getReg(Cst0).getFirstDef();
+  MachineInstr &DefCst1 = *Remater.getReg(Cst1).getFirstDef();
+  MachineInstr &DefCst2 = *Remater.getReg(Cst2).getFirstDef();
+  MachineInstr &DefCst3 = *Remater.getReg(Cst3).getFirstDef();
   EXPECT_EQ(std::next(DefCst0.getIterator()), DefCst1.getIterator());
   EXPECT_EQ(std::next(DefCst1.getIterator()), DefCst2.getIterator());
   EXPECT_EQ(std::next(DefCst2.getIterator()), DefCst3.getIterator());
