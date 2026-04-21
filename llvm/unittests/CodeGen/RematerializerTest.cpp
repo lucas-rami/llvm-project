@@ -790,9 +790,9 @@ body:             |
 /// Checks that rollback re-creates MIs at correct positions when the order of
 /// register deletions forces the re-creation logic to iterate through multiple
 /// deleted registers' respective insert position to find a valid one.
-TEST_F(RematerializerTest, RollbackInvalidInsertPos) {
+TEST_F(RematerializerTest, RollbackCorrectOrder) {
   StringRef MIR = R"(
-name:            RollbackInvalidInsertPos
+name:            RollbackCorrectOrder
 tracksRegLiveness: true
 machineFunctionInfo:
   isEntryFunction: true
@@ -807,7 +807,7 @@ body:             |
     S_NOP 0, implicit %0, implicit %1, implicit %2, implicit %3
     S_ENDPGM 0
 )";
-  ASSERT_TRUE(parseMIRAndInit(MIR, "RollbackInvalidInsertPos"));
+  ASSERT_TRUE(parseMIRAndInit(MIR, "RollbackCorrectOrder"));
   Rematerializer &Remater = getRematerializer();
   Rematerializer::DependencyReuseInfo DRI;
   Rollbacker Rollback;
@@ -821,40 +821,66 @@ body:             |
   // Indices of rematerializable registers.
   const RegisterIdx Cst0 = 0, Cst1 = 1, Cst2 = 2, Cst3 = 3;
 
-  // Rematerialize %0 to MBB1, deleting the original register
-  Remater.rematerializeToRegion(Cst0, MBB1, DRI);
-  RegionSizes[MBB0] -= 1;
-  RegionSizes[MBB1] += 1;
-  ASSERT_REGION_SIZES(RegionSizes);
+  auto RematToMBB1 = [&](RegisterIdx RegIdx) -> void {
+    Remater.rematerializeToRegion(RegIdx, MBB1, DRI.clear());
+    RegionSizes[MBB0] -= 1;
+    RegionSizes[MBB1] += 1;
+    ASSERT_REGION_SIZES(RegionSizes);
+  };
 
-  // Rematerialize %1 to MBB1, deleting the original register
-  Remater.rematerializeToRegion(Cst1, MBB1, DRI.clear());
-  RegionSizes[MBB0] -= 1;
-  RegionSizes[MBB1] += 1;
-  ASSERT_REGION_SIZES(RegionSizes);
+  auto GetNextMI = [&](MachineInstr *MI) -> MachineInstr * {
+    return &*std::next(MI->getIterator());
+  };
 
-  // Rematerialize %2 to MBB1, deleting the original register
-  Remater.rematerializeToRegion(Cst2, MBB1, DRI.clear());
-  RegionSizes[MBB0] -= 1;
-  RegionSizes[MBB1] += 1;
-  ASSERT_REGION_SIZES(RegionSizes);
+  auto RollbackAndCheckOriginalOrder = [&]() -> void {
+    // Rollback and check for correct instruction order in the original defining
+    // region. The asserts on region sizes ensure that all original registers
+    // were indeed deleted and will be re-created in the original region.
+    Rollback.rollback(Remater);
+    RegionSizes[MBB0] += 3;
+    RegionSizes[MBB1] -= 3;
+    ASSERT_REGION_SIZES(RegionSizes);
 
-  // Now rollback and check for correct instruction order in the original
-  // defining region. The asserts on region sizes ensure that all original
-  // registers were indeed deleted and will be re-created in the original
-  // region.
-  Rollback.rollback(Remater);
-  RegionSizes[MBB0] += 3;
-  RegionSizes[MBB1] -= 3;
-  ASSERT_REGION_SIZES(RegionSizes);
+    MachineInstr *DefCst0 = Remater.getReg(Cst0).DefMI;
+    MachineInstr *DefCst1 = Remater.getReg(Cst1).DefMI;
+    MachineInstr *DefCst2 = Remater.getReg(Cst2).DefMI;
+    MachineInstr *DefCst3 = Remater.getReg(Cst3).DefMI;
+    EXPECT_EQ(GetNextMI(DefCst0), DefCst1);
+    EXPECT_EQ(GetNextMI(DefCst1), DefCst2);
+    EXPECT_EQ(GetNextMI(DefCst2), DefCst3);
+  };
 
-  MachineInstr &DefCst0 = *Remater.getReg(Cst0).DefMI;
-  MachineInstr &DefCst1 = *Remater.getReg(Cst1).DefMI;
-  MachineInstr &DefCst2 = *Remater.getReg(Cst2).DefMI;
-  MachineInstr &DefCst3 = *Remater.getReg(Cst3).DefMI;
-  EXPECT_EQ(std::next(DefCst0.getIterator()), DefCst1.getIterator());
-  EXPECT_EQ(std::next(DefCst1.getIterator()), DefCst2.getIterator());
-  EXPECT_EQ(std::next(DefCst2.getIterator()), DefCst3.getIterator());
+  // Test every possible rematerialization order.
+
+  RematToMBB1(Cst0);
+  RematToMBB1(Cst1);
+  RematToMBB1(Cst2);
+  RollbackAndCheckOriginalOrder();
+
+  RematToMBB1(Cst0);
+  RematToMBB1(Cst2);
+  RematToMBB1(Cst1);
+  RollbackAndCheckOriginalOrder();
+
+  RematToMBB1(Cst1);
+  RematToMBB1(Cst0);
+  RematToMBB1(Cst2);
+  RollbackAndCheckOriginalOrder();
+
+  RematToMBB1(Cst1);
+  RematToMBB1(Cst2);
+  RematToMBB1(Cst0);
+  RollbackAndCheckOriginalOrder();
+
+  RematToMBB1(Cst2);
+  RematToMBB1(Cst0);
+  RematToMBB1(Cst1);
+  RollbackAndCheckOriginalOrder();
+
+  RematToMBB1(Cst2);
+  RematToMBB1(Cst1);
+  RematToMBB1(Cst0);
+  RollbackAndCheckOriginalOrder();
 
   EXPECT_TRUE(getMF().verify());
 }
