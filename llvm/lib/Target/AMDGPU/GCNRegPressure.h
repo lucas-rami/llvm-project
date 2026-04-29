@@ -255,13 +255,24 @@ public:
   bool isSaveBeneficial(const GCNRegPressure &SaveRP) const;
 
   /// Saves virtual register \p Reg with lanemask \p Mask.
-  void saveReg(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
-    RP.inc(Reg, Mask, LaneBitmask::getNone(), MRI);
+  void saveReg(Register Reg, LaneBitmask Mask) {
+    RP.inc(Reg, Mask, LaneBitmask::getNone(), MF.getRegInfo());
+  }
+
+  /// Adds virtual register \p Reg with lanemask \p Mask.
+  void inc(Register Reg, LaneBitmask Mask, const MachineRegisterInfo &MRI) {
+    RP.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
   }
 
   /// Returns the benefit towards achieving the RP target that saving \p SaveRP
   /// represents, in total number of registers saved across all classes.
   unsigned getNumRegsBenefit(const GCNRegPressure &SaveRP) const;
+
+  unsigned getNumRegsBenefit(Register Reg, LaneBitmask Mask) const {
+    GCNRegPressure SaveRP;
+    SaveRP.inc(Reg, LaneBitmask::getNone(), Mask, MF.getRegInfo());
+    return getNumRegsBenefit(SaveRP);
+  }
 
   /// Saves a total pressure of \p SaveRP.
   void saveRP(const GCNRegPressure &SaveRP) {

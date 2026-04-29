@@ -20,6 +20,7 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/CodeGen/Rematerializer.h"
+#include "GCNRematStrategy.h"
 
 namespace llvm {
 
@@ -326,6 +327,8 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   void setTargetOccupancy(unsigned TargetOccupancy);
 
   void runSchedStages();
+
+  void preSchedRematerialize();
 
   std::unique_ptr<GCNSchedStage> createSchedStage(GCNSchedStageID SchedStageID);
 
@@ -665,35 +668,15 @@ private:
   /// rescheduled.
   BitVector RescheduleRegions;
 
-  /// Underlying utilities to identify and perform rematerializations.
-  Rematerializer Remater;
+  /// FIXME: the DAG should just maintain that properly.
+  SmallVector<GCNRPTracker::LiveRegSet> LiveOuts;
 
-  struct RollbackSupport {
-    struct LiveMapUpdate {
-      /// The register index handle in the rematerializer.
-      RegisterIdx RegIdx;
-      /// Regions in which the original register was live-in or live-out.
-      BitVector LiveIn, LiveOut;
-
-      LiveMapUpdate(RegisterIdx RegIdx, const BitVector &LiveIn,
-                    const BitVector &LiveOut)
-          : RegIdx(RegIdx), LiveIn(LiveIn), LiveOut(LiveOut) {}
-    };
-
-    /// Rollback listener.
-    Rollbacker Listener;
-    /// Registers removed from live-maps along with bitvectors indicationg the
-    /// regions in which they were live-ins and live-outs.
-    SmallVector<LiveMapUpdate> LiveMapUpdates;
-
-    /// Attaches the rollback listener to the rematerializer.
-    RollbackSupport(Rematerializer &Remater) { Remater.addListener(&Listener); }
-  };
-
-  /// Rollback support. Maintained through a unique pointer because it is
-  /// optional and needs to persist between stage initialization and
-  /// finalization.
-  std::unique_ptr<RollbackSupport> Rollback;
+  /// Rematerializer.
+  std::unique_ptr<Rematerializer> Remater;
+  /// Rematerialization strategy.
+  std::unique_ptr<RematForRPTarget> Strategy;
+  /// Rollback listener.
+  std::unique_ptr<Rollbacker> RollbackListener;
 
   /// State of a region pre-re-scheduling but post-rematerializations that we
   /// must keep to be able to revert re-scheduling effects.
@@ -719,34 +702,9 @@ private:
   /// Returns the occupancy the stage is trying to achieve.
   unsigned getStageTargetOccupancy() const;
 
-  /// Determines the stage's objective (increasing occupancy or reducing
-  /// spilling, set in \ref TargetOcc). Defines \ref RPTargets in all regions to
-  /// achieve that objective and mark those that don't achieve it in \ref
-  /// TargetRegions. Returns whether there is any target region.
-  bool setObjective();
-
-  /// In all regions set in \p Regions, saves pressure \p RPSave and clear it as
-  /// a target if its RP target has been reached.
-  void updateRPTargets(const BitVector &Regions, const GCNRegPressure &RPSave);
-
-  /// Fully recomputes RP from the DAG in \p Regions. Among those regions, sets
-  /// again all \ref TargetRegions that were optimistically marked as satisfied
-  /// but are actually not, and returns whether there were any such regions.
-  bool updateAndVerifyRPTargets(const BitVector &Regions);
-
-  /// Removes register \p Reg from the live-ins of regions set in \p LiveIn and
-  /// the live-outs of regions set in \p LiveOut.
-  void removeFromLiveMaps(Register Reg, const BitVector &LiveIn,
-                          const BitVector &LiveOut);
-
-  /// Adds register \p Reg with mask \p Mask to the live-ins of regions set in
-  /// \p LiveIn and the live-outs of regions set in \p LiveOut.
-  void addToLiveMaps(Register Reg, LaneBitmask Mask, const BitVector &LiveIn,
-                     const BitVector &LiveOut);
-
-  /// If remat alone did not increase occupancy to the target one, rollbacks all
-  /// rematerializations and resets live-ins/RP in all regions impacted by the
-  /// stage to their pre-stage values.
+  /// If remat alone did not increase occupancy to the target one, rolls back
+  /// all rematerializations and resets live-ins/RP in all regions impacted by
+  /// the stage to their pre-stage values.
   void finalizeGCNSchedStage() override;
 
 public:
@@ -760,8 +718,7 @@ public:
 
   PreRARematStage(GCNSchedStageID StageID, GCNScheduleDAGMILive &DAG)
       : GCNSchedStage(StageID, DAG), TargetRegions(DAG.Regions.size()),
-        RescheduleRegions(DAG.Regions.size()),
-        Remater(MF, DAG.Regions, *DAG.LIS) {
+        RescheduleRegions(DAG.Regions.size()) {
     const unsigned NumRegions = DAG.Regions.size();
     RPTargets.reserve(NumRegions);
   }

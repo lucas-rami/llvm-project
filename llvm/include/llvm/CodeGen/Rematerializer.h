@@ -412,6 +412,9 @@ public:
   RegisterIdx findRematInRegion(RegisterIdx RegIdx, unsigned Region,
                                 SlotIndex Before) const;
 
+  const MachineFunction &getMF() const { return MF; }
+  const LiveIntervals &getLIS() const { return LIS; }
+
   Printable printDependencyDAG(RegisterIdx RootIdx) const;
   Printable printID(RegisterIdx RegIdx) const;
   Printable printRematReg(RegisterIdx RegIdx, bool SkipRegions = false) const;
@@ -420,9 +423,10 @@ public:
                       std::optional<unsigned> UseRegion = std::nullopt) const;
 
 private:
+  MachineFunction &MF;
   SmallVectorImpl<RegionBoundaries> &Regions;
-  MachineRegisterInfo &MRI;
   LiveIntervals &LIS;
+  MachineRegisterInfo &MRI;
   const TargetInstrInfo &TII;
   const TargetRegisterInfo &TRI;
   SmallPtrSet<Listener *, 1> Listeners;

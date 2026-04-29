@@ -94,26 +94,22 @@ Rematerializer::rematerializeToPos(RegisterIdx RootIdx, unsigned UseRegion,
   assert(!DRI.DependencyMap.contains(RootIdx));
   LLVM_DEBUG(dbgs() << "Rematerializing " << printID(RootIdx) << '\n');
 
-  SmallVector<Reg::Dependency, 2> NewDeps;
-  // Copy all dependencies because recursive rematerialization of dependencies
-  // may invalidate references to the backing vector of registers.
-  SmallVector<Reg::Dependency, 2> OldDeps(getReg(RootIdx).Dependencies);
-  for (const Reg::Dependency &Dep : OldDeps) {
-    // Recursively rematerialize required dependencies at the same position as
-    // the root. Registers form a DAG so the recursion is guaranteed to
-    // terminate.
-    auto RematIdx = DRI.DependencyMap.find(Dep.RegIdx);
-    RegisterIdx NewDepRegIdx;
-    if (RematIdx == DRI.DependencyMap.end())
-      NewDepRegIdx = rematerializeToPos(Dep.RegIdx, UseRegion, InsertPos, DRI);
-    else
-      NewDepRegIdx = RematIdx->second;
-    NewDeps.emplace_back(Dep.MOIdx, NewDepRegIdx);
-  }
-  RegisterIdx NewIdx =
-      rematerializeReg(RootIdx, UseRegion, InsertPos, std::move(NewDeps));
-  DRI.DependencyMap.insert({RootIdx, NewIdx});
-  return NewIdx;
+  std::function<RegisterIdx(RegisterIdx)> Remat = [&](RegisterIdx RegIdx) {
+    SmallVector<Reg::Dependency, 2> Dependencies;
+    for (const Reg::Dependency &Dep : getReg(RegIdx).Dependencies) {
+      auto RematIdx = DRI.DependencyMap.find(Dep.RegIdx);
+      if (RematIdx == DRI.DependencyMap.end())
+        Dependencies.emplace_back(Dep.MOIdx, Remat(Dep.RegIdx));
+      else
+        Dependencies.emplace_back(Dep.MOIdx, DRI.DependencyMap.at(Dep.RegIdx));
+    }
+    RegisterIdx NewIdx =
+        rematerializeReg(RegIdx, UseRegion, InsertPos, std::move(Dependencies));
+    DRI.DependencyMap.insert({RegIdx, NewIdx});
+    return NewIdx;
+  };
+  
+  return Remat(RootIdx);
 }
 
 void Rematerializer::transferUser(RegisterIdx FromRegIdx, RegisterIdx ToRegIdx,
@@ -287,7 +283,7 @@ void Rematerializer::deleteRegIfUnused(RegisterIdx RootIdx) {
     // A deleted register's dependencies may be deletable too.
     const Reg &DeleteReg = getReg(DepDAG.pop_back_val());
     for (const Reg::Dependency &Dep : DeleteReg.Dependencies) {
-      // All dependencies loose a user (the deleted register).
+      // All dependencies lose a user (the deleted register).
       Reg &DepReg = Regs[Dep.RegIdx];
       DepReg.eraseUser(DeleteReg.DefMI, DeleteReg.DefRegion);
       if (DepReg.Uses.empty()) {
@@ -338,7 +334,7 @@ void Rematerializer::deleteReg(RegisterIdx RegIdx) {
 Rematerializer::Rematerializer(MachineFunction &MF,
                                SmallVectorImpl<RegionBoundaries> &Regions,
                                LiveIntervals &LIS)
-    : Regions(Regions), MRI(MF.getRegInfo()), LIS(LIS),
+    : MF(MF), Regions(Regions), LIS(LIS), MRI(MF.getRegInfo()),
       TII(*MF.getSubtarget().getInstrInfo()), TRI(TII.getRegisterInfo()) {
 #ifdef EXPENSIVE_CHECKS
   // Check that regions are valid.
