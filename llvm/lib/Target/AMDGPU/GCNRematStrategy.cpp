@@ -48,7 +48,7 @@ checkLivenessInRegions(Register Reg, BitVector &LiveIn, BitVector &LiveOut,
 }
 
 namespace {
-  
+
 struct Candidate {
   /// The root register this candidates represent.
   unsigned RootIdx;
@@ -69,7 +69,7 @@ struct Candidate {
   DenseMap<unsigned, RegionRematInfo> Remats;
   /// Registers whose live range needs to be extended to perform the
   /// rematerialization.
-  SmallDenseSet<RegSubRegPair, 4> LRExtensions;
+  SmallDenseMap<Register, LaneBitmask, 2> LRExtensions;
 
   Candidate(unsigned RootIdx, const Rematerializer::Reg &Reg,
             const MachineRegisterInfo &MRI,
@@ -185,6 +185,8 @@ void Candidate::update(bool RematForSpillAvoidance,
                        const Rematerializer &Remater,
                        const RegionTargets &Regions, const RegionFrequency &FI,
                        const LiveIntervals &LIS) {
+  BeneficialRegions.reset();
+  MaxFreqNoUse = MaxFreqUse = RegionImpact = 0;
   if (!makeRematPlan(Remater, LIS))
     return;
   const Rematerializer::Reg &RootReg = Remater.getReg(RootIdx);
@@ -210,8 +212,6 @@ void Candidate::update(bool RematForSpillAvoidance,
     FreqDiff -= (RRI.DepRemats.size() + 1) * RegionFreq;
   }
 
-  BeneficialRegions.reset();
-  MaxFreqNoUse = MaxFreqUse = RegionImpact = 0;
   for (unsigned I = 0, E = Remater.getNumRegions(); I < E; ++I) {
     const GCNRPTarget &LiveInTarget = Regions.RPLiveIn[I];
     const GCNRPTarget &LiveOutTarget = Regions.RPLiveOut[I];
@@ -236,14 +236,8 @@ void Candidate::update(bool RematForSpillAvoidance,
 bool Candidate::isDetrimental(const MachineFunction &MF) const {
   GCNRegPressure ExtendRPInc;
   const MachineRegisterInfo &MRI = MF.getRegInfo();
-  const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
-  for (const RegSubRegPair &RegExtend : LRExtensions) {
-    LaneBitmask Mask = RegExtend.SubReg
-                           ? TRI.getSubRegIndexLaneMask(RegExtend.SubReg)
-                           : MRI.getMaxLaneMaskForVReg(RegExtend.Reg);
-
-    ExtendRPInc.inc(RegExtend.Reg, LaneBitmask::getNone(), Mask, MRI);
-  }
+  for (const auto &[Reg, Mask] : LRExtensions)
+    ExtendRPInc.inc(Reg, LaneBitmask::getNone(), Mask, MRI);
   if (Save.less(MF, ExtendRPInc))
     return true;
 
@@ -335,38 +329,41 @@ void Candidate::computeRegionDependencies(unsigned UseRegion, SlotIndex Use,
   RegionRematInfo &RRI = Remats[UseRegion];
   do {
     unsigned DAGRegIdx = RematDAG.pop_back_val();
+    const Rematerializer::Reg &DAGReg = Remater.getReg(DAGRegIdx);
+    SlotIndex RefSlot = Remater.getLIS()
+                            .getInstructionIndex(*DAGReg.getFirstDef())
+                            .getRegSlot();
 
     // Unrematerializable operands are either available and should be re-used
     // or must have their live-range extended for the rematerialization to be
     // possible.
-    const Rematerializer::Reg &DAGReg = Remater.getReg(DAGRegIdx);
-    for (unsigned MOIdx : Remater.getUnrematableOprds(DAGRegIdx)) {
-      MachineOperand &MO = DAGReg.DefMI->getOperand(MOIdx);
-      if (!Remater.isMOIdenticalAtUses(MO, Use))
-        LRExtensions.insert({MO.getReg(), MO.getSubReg()});
+    for (const auto &[Reg, Mask] : Remater.getUnrematableOprds(DAGRegIdx)) {
+      if (!Remater.isRegIdenticalAtUses(Reg, Mask, RefSlot, Use))
+        LRExtensions[Reg] |= Mask;
     }
 
     // All dependencies must either be available at uses or rematerializable
     // and recursively meeting this criteria.
-    for (const Rematerializer::Reg::Dependency &Dep : DAGReg.Dependencies) {
-      if (!SeenDeps.insert(Dep.RegIdx).second)
+    for (Rematerializer::RegisterIdx DepRegIdx : DAGReg.Dependencies) {
+      if (!SeenDeps.insert(DepRegIdx).second)
         continue;
-      if (Remater.isMOIdenticalAtUses(DAGReg.DefMI->getOperand(Dep.MOIdx),
-                                      Use)) {
+      const Rematerializer::Reg &DepReg = Remater.getReg(DepRegIdx);
+      if (Remater.isRegIdenticalAtUses(DepReg.getDefReg(), DepReg.Mask, RefSlot,
+                                       Use)) {
         // Tells the rematerializer to just re-use the existing register.
-        RRI.DRI.reuse(Dep.RegIdx);
+        RRI.DRI.reuse(DepRegIdx);
       } else {
         unsigned RematIdx =
-            Remater.findRematInRegion(Dep.RegIdx, UseRegion, Use);
+            Remater.findRematInRegion(DepRegIdx, UseRegion, Use);
         if (RematIdx != Rematerializer::NoReg) {
           // Tells the rematerializer to use a rematerialized version of the
           // register.
-          RRI.DRI.useRemat(Dep.RegIdx, RematIdx);
+          RRI.DRI.useRemat(DepRegIdx, RematIdx);
         } else {
           // The rematerializer will also rematerialize this register to the
           // region.
-          RRI.DepRemats.push_back(Dep.RegIdx);
-          RematDAG.push_back(Dep.RegIdx);
+          RRI.DepRemats.push_back(DepRegIdx);
+          RematDAG.push_back(DepRegIdx);
         }
       }
     }
@@ -397,9 +394,9 @@ Printable Candidate::print(const Rematerializer &Remater) const {
         }
         First = false;
       }
-      for (const RegSubRegPair &RegSubReg : LRExtensions) {
+      for (const auto &[Reg, _] : LRExtensions) {
         OS << (First ? "" : ", ") << "extend "
-           << printReg(RegSubReg.Reg, nullptr, RegSubReg.SubReg, nullptr);
+           << printReg(Reg, nullptr, 0, nullptr);
         First = false;
       }
       OS << " }\n";
@@ -483,13 +480,11 @@ bool RematForRPTarget::rematerialize(BitVector &AffectedRegions,
   });
 
   const MachineRegisterInfo &MRI = MF.getRegInfo();
-  const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
   AffectedRegions.resize(getNumRegions());
   if (!hasTargetRegions())
     return true;
 
   SmallVector<Candidate, 4> Candidates;
-
   auto CreateCandidates = [&](bool SkipLiveChecks) -> void {
     const unsigned NumRegs = Remater.getNumRegs();
     Candidates.reserve(NumRegs);
@@ -562,11 +557,8 @@ bool RematForRPTarget::rematerialize(BitVector &AffectedRegions,
 
       // Extended live ranges become live-ins/live-outs in regions in which the
       // rematerialized register was a live-in/live-out.
-      for (const auto &[Reg, SubReg] : Cand.LRExtensions) {
-        LaneBitmask Mask = SubReg ? TRI.getSubRegIndexLaneMask(SubReg)
-                                  : MRI.getMaxLaneMaskForVReg(Reg);
+      for (const auto &[Reg, Mask] : Cand.LRExtensions)
         addToLiveMaps(Reg, Mask, Cand.LiveIn, Cand.LiveOut);
-      }
 
       // Update live maps for all rematerialized registers and their
       // dependencies. Also identify all registers whose users have changed as a
@@ -577,14 +569,13 @@ bool RematForRPTarget::rematerialize(BitVector &AffectedRegions,
       ChangedUsers.insert(Cand.RootIdx);
       const Rematerializer::Reg &Reg = Remater.getReg(Cand.RootIdx);
       removeFromLiveMaps(Cand.DefReg, Reg.Mask, Cand.LiveIn, Cand.LiveOut);
-      const bool FullRemat = Reg.Uses.empty();
       for (auto &[_, RRI] : Cand.Remats) {
         for (const auto &[OldDepIdx, NewDepIdx] : RRI.DRI.DependencyMap) {
           // New dependencies gained a new user (the rematerialized
           // instruction). If this was a full rematerialization, old
           // dependencies lost a user (the now deleted original register).
           ChangedUsers.insert(NewDepIdx);
-          if (FullRemat) {
+          if (!Reg.isAlive()) {
             ChangedUsers.insert(OldDepIdx);
 
             // Dependencies that lost a user as the result of the
@@ -677,8 +668,8 @@ static void addToLiveMapsImpl(
     Register Reg, LaneBitmask Mask,
     SmallVectorImpl<GCNRPTracker::LiveRegSet> &LiveRegs,
     BitVector &UnsatTargets, SmallVectorImpl<GCNRPTarget> &Targets,
-    const BitVector &LiveRegions, const MachineRegisterInfo &MRI) {
-  for (unsigned I : LiveRegions.set_bits()) {
+    const BitVector &AddLiveRegions, const MachineRegisterInfo &MRI) {
+  for (unsigned I : AddLiveRegions.set_bits()) {
     GCNRPTracker::LiveRegSet &RegionLiveIns = LiveRegs[I];
     auto LiveIn = RegionLiveIns.find(Reg);
     if (LiveIn != RegionLiveIns.end())
@@ -687,7 +678,7 @@ static void addToLiveMapsImpl(
       RegionLiveIns.insert({Reg, Mask});
     Targets[I].inc(Reg, Mask, MRI);
     if (!UnsatTargets[I] && !Targets[I].satisfied()) {
-      LLVM_DEBUG(dbgs() << "  [" << I << "] Live-in target exceeded!\n");
+      LLVM_DEBUG(dbgs() << "  [" << I << "] Target exceeded!\n");
       UnsatTargets.set(I);
     }
   }
@@ -711,11 +702,36 @@ Printable RematForRPTarget::printTargetRegions() const {
     }
     dbgs() << "Target regions are:\n";
     for (unsigned I = 0, E = getNumRegions(); I < E; ++I) {
-      if (Targets.ExcessLiveIn[I])
-        dbgs() << "  [" << I << "] @live-ins: " << Targets.RPLiveIn[I] << "\n";
-      if (Targets.ExcessLiveOut[I])
-        dbgs() << "  [" << I << "] @live-outs: " << Targets.RPLiveOut[I]
-               << "\n";
+      const auto &[RegionBegin, RegionEnd] = Remater.getRegion(I);
+      const bool IsEmptyRegion = RegionBegin == RegionEnd;
+      if (Targets.ExcessLiveIn[I]) {
+        dbgs() << "  [" << I << "] live-ins";
+        if (!IsEmptyRegion) {
+          MachineBasicBlock::iterator FirstNonDebug =
+              skipDebugInstructionsForward(RegionBegin, RegionEnd);
+          if (FirstNonDebug != RegionEnd) {
+            dbgs() << " @ " << LIS.getInstructionIndex(*FirstNonDebug) << ": ";
+            FirstNonDebug->print(dbgs(), /*IsStandalone=*/true,
+                                 /*SkipOpers=*/true, /*SkipDebugLoc=*/false,
+                                 /*AddNewLine=*/false);
+          }
+        }
+        dbgs() << "\n    " << Targets.RPLiveIn[I] << "\n";
+      }
+      if (Targets.ExcessLiveOut[I]) {
+        dbgs() << "  [" << I << "] live-outs";
+        if (!IsEmptyRegion) {
+          MachineBasicBlock::iterator LastNonDebug =
+              skipDebugInstructionsBackward(RegionEnd, RegionBegin);
+          if (LastNonDebug != RegionBegin) {
+            dbgs() << " @ " << LIS.getInstructionIndex(*LastNonDebug) << ": ";
+            LastNonDebug->print(dbgs(), /*IsStandalone=*/true,
+                                /*SkipOpers=*/true, /*SkipDebugLoc=*/false,
+                                /*AddNewLine=*/false);
+          }
+        }
+        dbgs() << "\n    " << Targets.RPLiveOut[I] << "\n";
+      }
     }
   });
 }

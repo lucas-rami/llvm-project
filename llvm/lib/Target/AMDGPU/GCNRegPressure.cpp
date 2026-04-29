@@ -685,8 +685,10 @@ bool GCNDownwardRPTracker::advanceBeforeNext(MachineInstr *MI,
         LiveRegs.erase(It);
     } else if (!LI.liveAt(SI)) {
       auto It = LiveRegs.find(MO.getReg());
-      if (It == LiveRegs.end())
+      if (It == LiveRegs.end()) {
+        dbgs() << printReg(MO.getReg()) << " no live :(\n";
         llvm_unreachable("register isn't live");
+      }
       CurPressure.inc(MO.getReg(), It->second, LaneBitmask::getNone(), *MRI);
       LiveRegs.erase(It);
     }

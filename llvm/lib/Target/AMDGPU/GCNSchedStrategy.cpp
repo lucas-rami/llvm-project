@@ -1231,11 +1231,13 @@ void GCNScheduleDAGMILive::preSchedRematerialize() {
   unsigned DynamicVGPRBlockSize = MFI.getDynamicVGPRBlockSize();
   for (unsigned I = 0, E = Regions.size(); I != E; ++I) {
     GCNRegPressure RegionRP;
-    if (Regions[I].first == Regions[I].second)
+    if (Regions[I].first == Regions[I].second) {
       RegionRP = llvm::getRegPressure(MRI, LiveIns[I]);
-    GCNDownwardRPTracker RPTracker(*LIS);
-    RPTracker.advance(Regions[I].first, Regions[I].second, &LiveIns[I]);
-    RegionRP = RPTracker.moveMaxPressure();
+    } else {
+      GCNDownwardRPTracker RPTracker(*LIS);
+      RPTracker.advance(Regions[I].first, Regions[I].second, &LiveIns[I]);
+      RegionRP = RPTracker.moveMaxPressure();
+    }
     unsigned RegionOcc = RegionRP.getOccupancy(ST, DynamicVGPRBlockSize);
     NewMinOccupancy = std::min(NewMinOccupancy, RegionOcc);
   }
@@ -1518,7 +1520,8 @@ bool PreRARematStage::initGCNSchedStage() {
   // fixed if there is another pass after this pass.
   assert(!S.hasNextStage());
 
-  if (!GCNSchedStage::initGCNSchedStage() || DAG.Regions.size() <= 1)
+  if (DisablePreRARemat || !GCNSchedStage::initGCNSchedStage() ||
+      DAG.Regions.size() <= 1)
     return false;
 
 #ifndef NDEBUG
@@ -1569,7 +1572,8 @@ bool PreRARematStage::initGCNSchedStage() {
     PrintTargetRegions();
   });
 
-  /// FIXME: live-outs should just be maintained by the DAG live live-ins.
+  /// FIXME: live-outs should just be maintained by the DAG.
+  DAG.RegionLiveOuts.buildLiveRegMap();
   for (unsigned I = 0, E = DAG.Regions.size(); I < E; ++I)
     LiveOuts.push_back(DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I));
 
