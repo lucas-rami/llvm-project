@@ -627,8 +627,11 @@ bool GCNDownwardRPTracker::reset(const MachineInstr &MI,
   MBBEnd = MI.getParent()->end();
   NextMI = &MI;
   NextMI = skipDebugInstructionsForward(NextMI, MBBEnd);
-  if (NextMI == MBBEnd)
+  if (NextMI == MBBEnd) {
+    if (LiveRegsCopy)
+      MaxPressure = CurPressure = getRegPressure(*MRI, *LiveRegsCopy);
     return false;
+  }
   GCNRPTracker::reset(*NextMI, LiveRegsCopy, false);
   return true;
 }
