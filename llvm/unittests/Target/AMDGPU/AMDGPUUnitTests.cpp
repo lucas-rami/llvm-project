@@ -9,6 +9,7 @@
 #include "AMDGPUUnitTests.h"
 #include "AMDGPUTargetMachine.h"
 #include "GCNSubtarget.h"
+#include "llvm/CodeGen/MIRParser/MIRParser.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/TargetParser/TargetParser.h"
@@ -18,19 +19,21 @@
 
 using namespace llvm;
 
-std::once_flag flag;
+std::once_flag Flag;
 
-void InitializeAMDGPUTarget() {
-  std::call_once(flag, []() {
-    LLVMInitializeAMDGPUTargetInfo();
-    LLVMInitializeAMDGPUTarget();
-    LLVMInitializeAMDGPUTargetMC();
-  });
+void llvm::initializeAMDGPUTarget() {
+  LLVMInitializeAMDGPUTargetInfo();
+  LLVMInitializeAMDGPUTarget();
+  LLVMInitializeAMDGPUTargetMC();
 }
 
-std::unique_ptr<const GCNTargetMachine>
+void llvm::initializeAMDGPUTargetOnce(std::once_flag& Flag) {
+  std::call_once(Flag, initializeAMDGPUTarget);
+}
+
+std::unique_ptr<GCNTargetMachine>
 llvm::createAMDGPUTargetMachine(std::string TStr, StringRef CPU, StringRef FS) {
-  InitializeAMDGPUTarget();
+  initializeAMDGPUTargetOnce(Flag);
 
   Triple TT(TStr);
   std::string Error;
@@ -42,6 +45,29 @@ llvm::createAMDGPUTargetMachine(std::string TStr, StringRef CPU, StringRef FS) {
   return std::unique_ptr<GCNTargetMachine>(
       static_cast<GCNTargetMachine *>(T->createTargetMachine(
           TT, CPU, FS, Options, std::nullopt, std::nullopt)));
+}
+
+std::unique_ptr<Module> llvm::parseMIR(LLVMContext &Context,
+                                       const TargetMachine &TM,
+                                       StringRef MIRCode,
+                                       MachineModuleInfo &MMI) {
+  SMDiagnostic Diagnostic;
+  std::unique_ptr<MemoryBuffer> MBuffer = MemoryBuffer::getMemBuffer(MIRCode);
+  auto MIR = createMIRParser(std::move(MBuffer), Context);
+  if (!MIR)
+    return nullptr;
+
+  std::unique_ptr<Module> Mod = MIR->parseIRModule();
+  if (!Mod)
+    return nullptr;
+
+  Mod->setDataLayout(TM.createDataLayout());
+
+  if (MIR->parseMachineFunctions(*Mod, MMI)) {
+    return nullptr;
+  }
+
+  return Mod;
 }
 
 static cl::opt<bool> PrintCpuRegLimits(

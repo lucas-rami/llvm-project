@@ -17,9 +17,15 @@ namespace llvm {
 class GCNTargetMachine;
 class StringRef;
 
-std::unique_ptr<const GCNTargetMachine>
+void initializeAMDGPUTarget();
+
+void initializeAMDGPUTargetOnce(std::once_flag &Flag);
+
+std::unique_ptr<GCNTargetMachine>
 createAMDGPUTargetMachine(std::string TStr, StringRef CPU, StringRef FS);
 
+std::unique_ptr<Module> parseMIR(LLVMContext &Context, const TargetMachine &TM,
+                                 StringRef MIRCode, MachineModuleInfo &MMI);
 } // end namespace llvm
 
 #endif // LLVM_UNITTESTS_TARGET_AMDGPU_AMDGPUUNITTESTS_H

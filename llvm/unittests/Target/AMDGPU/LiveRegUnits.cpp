@@ -11,39 +11,11 @@
 #include "GCNSubtarget.h"
 #include "llvm/CodeGen/MIRParser/MIRParser.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
-#include "llvm/MC/TargetRegistry.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/TargetParser/TargetParser.h"
 #include "gtest/gtest.h"
 
 #include "AMDGPUGenSubtargetInfo.inc"
 
 using namespace llvm;
-
-// FIXME: Consolidate parseMIR and other common helpers (this one is copied from
-// unittests/MIR/MachineMetadata.cpp).
-std::unique_ptr<Module> parseMIR(LLVMContext &Context, const TargetMachine &TM,
-                                 StringRef MIRCode, const char *FnName,
-                                 MachineModuleInfo &MMI) {
-  SMDiagnostic Diagnostic;
-  std::unique_ptr<MemoryBuffer> MBuffer = MemoryBuffer::getMemBuffer(MIRCode);
-  auto MIR = createMIRParser(std::move(MBuffer), Context);
-  if (!MIR)
-    return nullptr;
-
-  std::unique_ptr<Module> Mod = MIR->parseIRModule();
-  if (!Mod)
-    return nullptr;
-
-  Mod->setDataLayout(TM.createDataLayout());
-
-  if (MIR->parseMachineFunctions(*Mod, MMI)) {
-    return nullptr;
-  }
-
-  return Mod;
-}
 
 TEST(AMDGPULiveRegUnits, TestVGPRBlockLoadStore) {
   auto TM = createAMDGPUTargetMachine("amdgcn-amd-", "gfx1200", "");
@@ -78,7 +50,7 @@ body:             |
 
   LLVMContext Context;
   MachineModuleInfo MMI(TM.get());
-  auto M = parseMIR(Context, *TM, MIRString, "vgpr-block-insts", MMI);
+  auto M = parseMIR(Context, *TM, MIRString, MMI);
 
   auto *MF = MMI.getMachineFunction(*M->getFunction("vgpr-block-insts"));
   auto *MBB = MF->getBlockNumbered(0);
