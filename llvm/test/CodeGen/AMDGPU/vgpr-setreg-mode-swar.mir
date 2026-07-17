@@ -264,34 +264,30 @@ body:             |
 ...
 
 ---
-# Case 7: Piggybacking blocked by s_setreg_imm32_b32 in between.
+# Case 7: Piggybacking allowed by s_setreg_imm32_b32 in between.
 
-# ASM-LABEL: {{^}}setreg_size_le_12_piggyback_superset_blocked:
-# ASM: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 4), 0x5005 ; msbs: dst=1 src0=1 src1=0 src2=0
-# ASM: s_set_vgpr_msb 0x4149
+# ASM-LABEL: {{^}}setreg_size_le_12_piggyback_allowed:
+# ASM: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 4), 0x26005 ; msbs: dst=2 src0=1 src1=2 src2=0
 
-# DIS-LABEL: <setreg_size_le_12_piggyback_superset_blocked>:
-# DIS: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 4), 0x5005
-# DIS: s_set_vgpr_msb 0x4149
-# DIS-NEXT: v_add_nc_u32_e32 v0 /*v256*/, v1 /*v257*/, v0 /*v512*/
+# DIS-LABEL: <setreg_size_le_12_piggyback_allowed>:
+# DIS: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 4), 0x26005
+# DIS-NEXT: v_add_nc_u32_e32 v1 /*v513*/, v1 /*v257*/, v0 /*v512*/
 
-name:            setreg_size_le_12_piggyback_superset_blocked
+name:            setreg_size_le_12_piggyback_allowed
 tracksRegLiveness: true
 body:             |
   bb.0:
-    ; CHECK-LABEL: name: setreg_size_le_12_piggyback_superset_blocked
+    ; CHECK-LABEL: name: setreg_size_le_12_piggyback_allowed
     ; CHECK: S_SET_VGPR_MSB 65, implicit-def $mode
     ; CHECK-NEXT: $vgpr256 = V_MOV_B32_e32 $vgpr257, implicit $exec
-    ; CHECK-NEXT: S_SETREG_IMM32_B32 20485, 6145, implicit-def $mode, implicit $mode
-    ; CHECK-NEXT: S_NOP 0
-    ; CHECK-NEXT: S_SET_VGPR_MSB 16713, implicit-def $mode
-    ; CHECK-NEXT: $vgpr256 = V_ADD_U32_e32 $vgpr257, $vgpr512, implicit $exec
+    ; CHECK-NEXT: S_SETREG_IMM32_B32 155653, 6145, implicit-def $mode, implicit $mode
+    ; CHECK-NEXT: $vgpr513 = V_ADD_U32_e32 $vgpr257, $vgpr512, implicit $exec
     ; CHECK-NEXT: S_ENDPGM 0
     $vgpr256 = V_MOV_B32_e32 $vgpr257, implicit $exec
     ; size=4, offset=0, hwreg=MODE: simm16 = 0x1801 = 6145
     S_SETREG_IMM32_B32 5, 6145, implicit-def $mode, implicit $mode
     ; Second instruction uses same dst/src0 (MSB=1) but adds src1 (MSB=2)
-    $vgpr256 = V_ADD_U32_e32 $vgpr257, $vgpr512, implicit $exec
+    $vgpr513 = V_ADD_U32_e32 $vgpr257, $vgpr512, implicit $exec
     S_ENDPGM 0
 ...
 
@@ -299,14 +295,13 @@ body:             |
 # Case 8: s_setreg_imm32_b32 (Size <= 12) followed by VGPR with different mode bits
 # First VGPR (V_MOV vgpr256, vgpr0): S_SET_VGPR_MSB mode = 64, MODE register mode = 1
 # Second VGPR (V_MOV vgpr256, vgpr256): S_SET_VGPR_MSB mode = 65, MODE register mode = 5
-# Setreg gets MODE mode = 1 from first VGPR. Second VGPR needs different src0 bits,
-# so a new S_SET_VGPR_MSB is inserted. The new S_SET_VGPR_MSB has mode = 65 | (64 << 8) = 16449.
+# Setreg gets MODE mode = 1 from first VGPR. Second VGPR needs different src0 bits.
 
 # ASM-LABEL: {{^}}setreg_size_le_12_then_different_vgpr:
-# ASM: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 4), 0x1005 ;  msbs: dst=1 src0=0 src1=0 src2=0
+# ASM: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 4), 0x5005 ;  msbs: dst=1 src0=1 src1=0 src2=0
 
 # DIS-LABEL: <setreg_size_le_12_then_different_vgpr>:
-# DIS: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 4), 0x1005
+# DIS: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 4), 0x5005
 # DIS: v_mov_b32_e32 v0 /*v256*/, v0 /*v256*/
 
 name:            setreg_size_le_12_then_different_vgpr
@@ -320,9 +315,7 @@ body:             |
     ; CHECK-NEXT: {{  $}}
     ; CHECK-NEXT: S_SET_VGPR_MSB 64, implicit-def $mode
     ; CHECK-NEXT: $vgpr256 = V_MOV_B32_e32 $vgpr0, implicit $exec
-    ; CHECK-NEXT: S_SETREG_IMM32_B32 4101, 6145, implicit-def $mode, implicit $mode
-    ; CHECK-NEXT: S_NOP 0
-    ; CHECK-NEXT: S_SET_VGPR_MSB 16449, implicit-def $mode
+    ; CHECK-NEXT: S_SETREG_IMM32_B32 20485, 6145, implicit-def $mode, implicit $mode
     ; CHECK-NEXT: $vgpr256 = V_MOV_B32_e32 $vgpr256, implicit $exec
     ; CHECK-NEXT: S_ENDPGM 0
     $vgpr256 = V_MOV_B32_e32 $vgpr0, implicit $exec
@@ -342,7 +335,7 @@ body:             |
 # New s_set_vgpr_msb imm = NewMode | (OldMode << 8) = 130 | (65 << 8) = 16770
 
 # ASM-LABEL: {{^}}setreg_size_gt_12_match_then_different_vgpr:
-# ASM: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 0, 16), 0x5abc ;  msbs: dst=1 src0=1 src1=0 src2=0
+# ASM: s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 1, 16), 0x5abc ;  msbs: dst=1 src0=1 src1=0 src2=0
 
 # DIS-LABEL: <setreg_size_gt_12_match_then_different_vgpr>:
 
@@ -353,15 +346,15 @@ body:             |
     ; CHECK-LABEL: name: setreg_size_gt_12_match_then_different_vgpr
     ; CHECK: S_SET_VGPR_MSB 65, implicit-def $mode
     ; CHECK-NEXT: $vgpr256 = V_MOV_B32_e32 $vgpr257, implicit $exec
-    ; CHECK-NEXT: S_SETREG_IMM32_B32 23228, 30721, implicit-def $mode, implicit $mode
+    ; CHECK-NEXT: S_SETREG_IMM32_B32 23228, 30785, implicit-def $mode, implicit $mode
     ; CHECK-NEXT: S_NOP 0
     ; CHECK-NEXT: S_SET_VGPR_MSB 16770, implicit-def $mode
     ; CHECK-NEXT: $vgpr512 = V_MOV_B32_e32 $vgpr513, implicit $exec
     ; CHECK-NEXT: S_ENDPGM 0
     $vgpr256 = V_MOV_B32_e32 $vgpr257, implicit $exec
-    ; size=16, offset=0, hwreg=MODE: simm16 = 0x7801 = 30721
+    ; size=16, offset=0, hwreg=MODE: simm16 = 0x7841 = 30785
     ; imm32 = 0x5ABC = 23228 (bits 12:19 = 5 = MODE register mode, matches!)
-    S_SETREG_IMM32_B32 23228, 30721, implicit-def $mode, implicit $mode
+    S_SETREG_IMM32_B32 23228, 30785, implicit-def $mode, implicit $mode
     $vgpr512 = V_MOV_B32_e32 $vgpr513, implicit $exec
     S_ENDPGM 0
 ...

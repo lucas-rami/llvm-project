@@ -10,8 +10,7 @@
 
 ---
 # Case 2 mismatch: setreg (size=16) with imm32[12:19] that doesn't match
-# current VGPR MSB. AMDGPULowerVGPREncoding inserts S_NOP + S_SET_VGPR_MSB
-# after the setreg.
+# current VGPR MSB.
 name: setreg_mode_size_gt_12_mismatch
 tracksRegLiveness: true
 body: |
@@ -20,8 +19,6 @@ body: |
     ; CHECK: S_SET_VGPR_MSB 64, implicit-def $mode
     ; CHECK-NEXT: $vgpr256 = V_MOV_B32_e32 undef $sgpr0, implicit $exec
     ; CHECK-NEXT: S_SETREG_IMM32_B32 6844, 30721, implicit-def $mode, implicit $mode
-    ; CHECK-NEXT: S_NOP 0
-    ; CHECK-NEXT: S_SET_VGPR_MSB 16384, implicit-def $mode
     ; CHECK-NEXT: SI_RETURN
     $vgpr256 = V_MOV_B32_e32 undef $sgpr0, implicit $exec
     ; hwreg(MODE, 0, 16): simm16 = 0x7801 = 30721
@@ -32,8 +29,8 @@ body: |
 
 ---
 # Case 2 with different next MSB: setreg (size=16) with imm32[12:19] that
-# doesn't match current VGPR MSB. S_NOP + S_SET_VGPR_MSB are inserted for the
-# next VALU (v512/v513).
+# doesn't match current VGPR MSB.  Offset is 0 so AMDGPULowerVGPREncoding
+# piggybacks changes required by next VALU into setreg.
 name: setreg_mode_size_gt_12_matches_next
 tracksRegLiveness: true
 body: |
@@ -41,9 +38,7 @@ body: |
     ; CHECK-LABEL: name: setreg_mode_size_gt_12_matches_next
     ; CHECK: S_SET_VGPR_MSB 65, implicit-def $mode
     ; CHECK-NEXT: $vgpr256 = V_MOV_B32_e32 undef $vgpr257, implicit $exec
-    ; CHECK-NEXT: S_SETREG_IMM32_B32 23228, 30721, implicit-def $mode, implicit $mode
-    ; CHECK-NEXT: S_NOP 0
-    ; CHECK-NEXT: S_SET_VGPR_MSB 16770, implicit-def $mode
+    ; CHECK-NEXT: S_SETREG_IMM32_B32 43708, 30721, implicit-def $mode, implicit $mode
     ; CHECK-NEXT: $vgpr512 = V_MOV_B32_e32 undef $vgpr513, implicit $exec
     ; CHECK-NEXT: S_ENDPGM 0
     $vgpr256 = V_MOV_B32_e32 undef $vgpr257, implicit $exec
@@ -92,17 +87,15 @@ body: |
 
 ---
 # Case 2 with high VGPR only AFTER setreg: setreg (size=16) with low VGPRs
-# before but high VGPRs after. AMDGPULowerVGPREncoding inserts S_NOP +
-# S_SET_VGPR_MSB before the next VALU (which is right after setreg).
+# before but high VGPRs after. Offset is 0 so AMDGPULowerVGPREncoding
+# piggybacks changes required by next VALU into setreg.
 name: setreg_mode_size_gt_12_high_vgpr_after
 tracksRegLiveness: true
 body: |
   bb.0:
     ; CHECK-LABEL: name: setreg_mode_size_gt_12_high_vgpr_after
     ; CHECK: $vgpr0 = V_MOV_B32_e32 undef $sgpr0, implicit $exec
-    ; CHECK-NEXT: S_SETREG_IMM32_B32 2748, 30721, implicit-def $mode, implicit $mode
-    ; CHECK-NEXT: S_NOP 0
-    ; CHECK-NEXT: S_SET_VGPR_MSB 64, implicit-def $mode
+    ; CHECK-NEXT: S_SETREG_IMM32_B32 6844, 30721, implicit-def $mode, implicit $mode
     ; CHECK-NEXT: $vgpr256 = V_MOV_B32_e32 undef $sgpr0, implicit $exec
     ; CHECK-NEXT: S_ENDPGM 0
     $vgpr0 = V_MOV_B32_e32 undef $sgpr0, implicit $exec
