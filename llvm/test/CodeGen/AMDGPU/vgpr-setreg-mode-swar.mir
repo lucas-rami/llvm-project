@@ -17,6 +17,8 @@
 
 name:            setreg_size_lt_12
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_lt_12
@@ -43,6 +45,8 @@ body:             |
 
 name:            setreg_size_eq_12
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_eq_12
@@ -68,6 +72,8 @@ body:             |
 
 name:            setreg_size_lt_12_nonzero_upper
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_lt_12_nonzero_upper
@@ -94,6 +100,8 @@ body:             |
 
 name:            setreg_size_gt_12_match
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_gt_12_match
@@ -120,6 +128,8 @@ body:             |
 
 name:            setreg_size_gt_12_offset_1_match
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_gt_12_offset_1_match
@@ -146,6 +156,8 @@ body:             |
 
 name:            setreg_size_gt_12_mismatch
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_gt_12_mismatch
@@ -172,6 +184,8 @@ body:             |
 
 name:            setreg_size_gt_12_mismatch_offset_1
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_gt_12_mismatch_offset_1
@@ -200,6 +214,8 @@ body:             |
 
 name:            setreg_non_mode_hwreg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_non_mode_hwreg
@@ -225,6 +241,8 @@ body:             |
 
 name:            setreg_size_lt_12_already_correct
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_lt_12_already_correct
@@ -252,6 +270,8 @@ body:             |
 
 name:            setreg_different_vgpr_msb
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_different_vgpr_msb
@@ -279,6 +299,8 @@ body:             |
 
 name:            setreg_size_le_12_piggyback_superset_blocked
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_le_12_piggyback_superset_blocked
@@ -313,6 +335,8 @@ body:             |
 
 name:            setreg_size_le_12_then_different_vgpr
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     liveins: $vgpr0
@@ -350,6 +374,8 @@ body:             |
 
 name:            setreg_size_gt_12_match_then_different_vgpr
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_gt_12_match_then_different_vgpr
@@ -382,6 +408,8 @@ body:             |
 
 name:            setreg_offset_8
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_offset_8
@@ -406,6 +434,8 @@ body:             |
 
 name:            setreg_offset_25
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_offset_25
@@ -439,6 +469,8 @@ body:             |
 ---
 name:            multiple_setreg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: multiple_setreg
@@ -492,6 +524,8 @@ body:             |
 ---
 name:            setreg_size_gt_12_offset_1_match_then_mismatch
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; CHECK-LABEL: name: setreg_size_gt_12_offset_1_match_then_mismatch

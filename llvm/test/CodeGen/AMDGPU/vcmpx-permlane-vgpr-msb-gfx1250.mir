@@ -37,6 +37,8 @@
 ---
 name:            vcmpx_permlane_high_vgpr_src0
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:            |
   ; CHECK-LABEL: name: vcmpx_permlane_high_vgpr_src0
   ; CHECK: bb.0:

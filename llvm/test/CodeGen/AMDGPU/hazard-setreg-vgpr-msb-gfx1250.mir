@@ -14,14 +14,14 @@
 # after the setreg.
 name: setreg_mode_size_gt_12_mismatch
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body: |
   bb.0:
     ; CHECK-LABEL: name: setreg_mode_size_gt_12_mismatch
     ; CHECK: S_SET_VGPR_MSB 64, implicit-def $mode
     ; CHECK-NEXT: $vgpr256 = V_MOV_B32_e32 undef $sgpr0, implicit $exec
     ; CHECK-NEXT: S_SETREG_IMM32_B32 6844, 30721, implicit-def $mode, implicit $mode
-    ; CHECK-NEXT: S_NOP 0
-    ; CHECK-NEXT: S_SET_VGPR_MSB 16384, implicit-def $mode
     ; CHECK-NEXT: SI_RETURN
     $vgpr256 = V_MOV_B32_e32 undef $sgpr0, implicit $exec
     ; hwreg(MODE, 0, 16): simm16 = 0x7801 = 30721
@@ -36,6 +36,8 @@ body: |
 # next VALU (v512/v513).
 name: setreg_mode_size_gt_12_matches_next
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body: |
   bb.0:
     ; CHECK-LABEL: name: setreg_mode_size_gt_12_matches_next
@@ -58,6 +60,8 @@ body: |
 # No hazard: S_SETREG_IMM32_B32 targeting non-MODE register.
 name: setreg_non_mode_no_hazard
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body: |
   bb.0:
     ; CHECK-LABEL: name: setreg_non_mode_no_hazard
@@ -78,6 +82,8 @@ body: |
 # Case 2 but no high VGPRs before setreg.
 name: setreg_mode_size_gt_12_no_high_vgpr
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body: |
   bb.0:
     ; CHECK-LABEL: name: setreg_mode_size_gt_12_no_high_vgpr
@@ -96,6 +102,8 @@ body: |
 # S_SET_VGPR_MSB before the next VALU (which is right after setreg).
 name: setreg_mode_size_gt_12_high_vgpr_after
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body: |
   bb.0:
     ; CHECK-LABEL: name: setreg_mode_size_gt_12_high_vgpr_after

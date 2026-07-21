@@ -45,63 +45,78 @@
 #include "GCNSubtarget.h"
 #include "SIDefines.h"
 #include "SIInstrInfo.h"
+#include "SIMachineFunctionInfo.h"
 #include "llvm/ADT/bit.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/Printable.h"
 
 using namespace llvm;
 
 #define DEBUG_TYPE "amdgpu-lower-vgpr-encoding"
 
+// #ifdef LLVM_DEBUG
+// #undef LLVM_DEBUG
+// #define LLVM_DEBUG(X) X
+// #endif
+
 namespace {
 
-class AMDGPULowerVGPREncoding {
-  static constexpr unsigned OpNum = 4;
-  static constexpr unsigned BitsPerField = 2;
-  static constexpr unsigned NumFields = 4;
-  static constexpr unsigned ModeWidth = NumFields * BitsPerField;
-  static constexpr unsigned ModeMask = (1 << ModeWidth) - 1;
-  static constexpr unsigned VGPRMSBShift =
-      llvm::countr_zero_constexpr<unsigned>(AMDGPU::Hwreg::DST_VGPR_MSB);
+static constexpr unsigned OpNum = 4;
+static constexpr unsigned BitsPerField = 2;
+static constexpr unsigned MaxMSB = (1 << BitsPerField) - 1;
+static constexpr unsigned NumFields = 4;
+static constexpr unsigned ModeWidth = NumFields * BitsPerField;
+static constexpr unsigned ModeMask = (1 << ModeWidth) - 1;
+static constexpr unsigned VGPRMSBShift =
+    llvm::countr_zero_constexpr<unsigned>(AMDGPU::Hwreg::DST_VGPR_MSB);
 
-  struct OpMode {
-    // No MSBs set means they are not required to be of a particular value.
-    std::optional<unsigned> MSBits;
+struct OpMode {
+  // No MSBs set means they are not required to be of a particular value.
+  std::optional<unsigned> MSBits;
 
-    bool update(const OpMode &New, bool &Rewritten) {
-      bool Updated = false;
-      if (New.MSBits) {
-        if (*New.MSBits != MSBits.value_or(0)) {
-          Updated = true;
-          Rewritten |= MSBits.has_value();
-        }
-        MSBits = New.MSBits;
-      }
-      return Updated;
+  bool update(const OpMode &New, bool &Override) {
+    bool Updated = false;
+    if (New.MSBits) {
+      Updated |= (!MSBits || *New.MSBits != *MSBits);
+      Override |= (MSBits && *New.MSBits != *MSBits);
+      MSBits = New.MSBits;
     }
-  };
+    return Updated;
+  }
+};
 
-  struct ModeTy {
-    OpMode Ops[OpNum];
+struct ModeTy {
+  OpMode Ops[OpNum];
 
-    bool update(const ModeTy &New, bool &Rewritten) {
-      bool Updated = false;
-      for (unsigned I : seq(OpNum))
-        Updated |= Ops[I].update(New.Ops[I], Rewritten);
-      return Updated;
-    }
+  ModeTy() = default;
 
-    unsigned encode() const {
-      // Layout: [src0 msb, src1 msb, src2 msb, dst msb].
-      unsigned V = 0;
-      for (const auto &[I, Op] : enumerate(Ops))
-        V |= Op.MSBits.value_or(0) << (I * 2);
-      return V;
-    }
+  ModeTy(unsigned MSB) {
+    assert(MSB <= MaxMSB && "invalid MSB value");
+    for (OpMode &Op : Ops)
+      Op.MSBits = MSB;
+  }
 
-    void print(raw_ostream &OS) const {
-      static const char *FieldNames[] = {"src0", "src1", "src2", "dst"};
+  bool update(const ModeTy &New, bool &Override) {
+    bool Updated = false;
+    for (unsigned I : seq(OpNum))
+      Updated |= Ops[I].update(New.Ops[I], Override);
+    return Updated;
+  }
+
+  unsigned encode() const {
+    // Layout: [src0 msb, src1 msb, src2 msb, dst msb].
+    unsigned V = 0;
+    for (const auto &[I, Op] : enumerate(Ops))
+      V |= Op.MSBits.value_or(0) << (I * 2);
+    return V;
+  }
+
+  Printable print() const {
+    static const char *FieldNames[] = {"src0", "src1", "src2", "dst"};
+    return Printable([&](raw_ostream &OS) {
       OS << '{';
       for (const auto &[I, Op] : enumerate(Ops)) {
         if (I)
@@ -113,27 +128,33 @@ class AMDGPULowerVGPREncoding {
           OS << '?';
       }
       OS << '}';
-    }
+    });
+  }
 
-    // Check if this mode is compatible with required \p NewMode without
-    // modification.
-    bool isCompatible(const ModeTy NewMode) const {
-      for (unsigned I : seq(OpNum)) {
-        if (!NewMode.Ops[I].MSBits.has_value())
-          continue;
-        if (Ops[I].MSBits.value_or(0) != NewMode.Ops[I].MSBits.value_or(0))
-          return false;
-      }
-      return true;
+  // Check if this mode is compatible with required \p NewMode without
+  // modification.
+  bool isCompatible(const ModeTy NewMode) const {
+    for (unsigned I : seq(OpNum)) {
+      if (!NewMode.Ops[I].MSBits.has_value())
+        continue;
+      if (Ops[I].MSBits.value_or(0) != NewMode.Ops[I].MSBits.value_or(0))
+        return false;
     }
-  };
+    return true;
+  }
+};
 
+class AMDGPULowerVGPREncoding {
 public:
-  bool run(MachineFunction &MF);
+  bool run(MachineFunction &MF,
+           const MachineBlockFrequencyInfo *MBFI = nullptr);
 
 private:
   const SIInstrInfo *TII;
   const SIRegisterInfo *TRI;
+
+  /// Estimated block frequencies, or nullptr if unavailable.
+  const MachineBlockFrequencyInfo *MBFI;
 
   // Current basic block.
   MachineBasicBlock *MBB;
@@ -143,6 +164,9 @@ private:
 
   /// Current mode bits.
   ModeTy CurrentMode;
+
+  MachineInstr *FirstModeSetInMBB;
+  ModeTy FirstMode;
 
   /// Number of current hard clause instructions.
   unsigned ClauseLen;
@@ -162,14 +186,6 @@ private:
 
   /// Insert mode change before \p I. \returns true if mode was changed.
   bool setMode(ModeTy NewMode, MachineBasicBlock::instr_iterator I);
-
-  /// Reset mode to default.
-  void resetMode(MachineBasicBlock::instr_iterator I) {
-    ModeTy Mode;
-    for (OpMode &Op : Mode.Ops)
-      Op.MSBits = 0;
-    setMode(Mode, I);
-  }
 
   /// If \p MO references VGPRs, return the MSBs. Otherwise, return nullopt.
   std::optional<unsigned> getMSBs(const MachineOperand &MO) const;
@@ -213,14 +229,20 @@ private:
   bool updateSetregModeImm(MachineInstr &MI, int64_t ModeValue);
 };
 
+static void piggyback(MachineInstr &ModeSetMI, ModeTy Mode) {
+  assert(ModeSetMI.getOpcode() == AMDGPU::S_SET_VGPR_MSB && "must be mode set");
+  // Carry old mode bits from the existing instruction.
+  MachineOperand &Op = ModeSetMI.getOperand(0);
+  int64_t OldModeBits = Op.getImm() & (ModeMask << ModeWidth);
+  Op.setImm(Mode.encode() | OldModeBits);
+}
+
 bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode,
                                       MachineBasicBlock::instr_iterator I) {
   LLVM_DEBUG({
-    dbgs() << "  setMode: NewMode=";
-    NewMode.print(dbgs());
-    dbgs() << " CurrentMode=";
-    CurrentMode.print(dbgs());
-    dbgs() << " MostRecentModeSet=" << (MostRecentModeSet ? "yes" : "null");
+    dbgs() << "  setMode: NewMode=" << NewMode.print()
+           << " CurrentMode=" << CurrentMode.print()
+           << " MostRecentModeSet=" << (MostRecentModeSet ? "yes" : "null");
     if (I != MBB->instr_end())
       dbgs() << " before: " << *I;
     else
@@ -230,20 +252,18 @@ bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode,
   // Record previous mode into high 8 bits of the immediate.
   int64_t OldModeBits = CurrentMode.encode() << ModeWidth;
 
-  bool Rewritten = false;
-  if (!CurrentMode.update(NewMode, Rewritten)) {
+  bool Override = false;
+  if (!CurrentMode.update(NewMode, Override)) {
     LLVM_DEBUG(dbgs() << "    -> no change needed\n");
     return false;
   }
 
-  LLVM_DEBUG(dbgs() << "    Rewritten=" << Rewritten << " after update\n");
+  LLVM_DEBUG(dbgs() << "    Override=" << Override << " after update\n");
 
-  if (MostRecentModeSet && !Rewritten) {
-    // Update MostRecentModeSet with the new mode.
-    MachineOperand &Op = MostRecentModeSet->getOperand(0);
-    // Carry old mode bits from the existing instruction.
-    int64_t OldModeBits = Op.getImm() & (ModeMask << ModeWidth);
-    Op.setImm(CurrentMode.encode() | OldModeBits);
+  if (MostRecentModeSet && !Override) {
+    piggyback(*MostRecentModeSet, CurrentMode);
+    if (MostRecentModeSet == FirstModeSetInMBB)
+      FirstMode = CurrentMode;
     LLVM_DEBUG(dbgs() << "    -> piggybacked onto S_SET_VGPR_MSB: "
                       << *MostRecentModeSet);
     return true;
@@ -260,6 +280,12 @@ bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode,
   MostRecentModeSet =
       BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_SET_VGPR_MSB))
           .addImm(NewMode.encode() | OldModeBits);
+
+  if (!FirstModeSetInMBB) {
+    FirstModeSetInMBB = MostRecentModeSet;
+    FirstMode = NewMode;
+  }
+
   LLVM_DEBUG(dbgs() << "    -> inserted new S_SET_VGPR_MSB: "
                     << *MostRecentModeSet);
 
@@ -346,18 +372,16 @@ bool AMDGPULowerVGPREncoding::runOnMachineInstr(MachineInstr &MI) {
     LLVM_DEBUG({
       dbgs() << "  runOnMachineInstr: ";
       MI.print(dbgs());
-      dbgs() << "    computed NewMode=";
-      NewMode.print(dbgs());
-      dbgs() << " compatible=" << CurrentMode.isCompatible(NewMode) << '\n';
+      dbgs() << "    computed NewMode=" << NewMode.print()
+             << " compatible=" << CurrentMode.isCompatible(NewMode) << '\n';
     });
     if (!CurrentMode.isCompatible(NewMode) && MI.isCommutable() &&
         TII->commuteInstruction(MI)) {
       ModeTy NewModeCommuted;
       computeMode(NewModeCommuted, MI, Ops.first, Ops.second);
       LLVM_DEBUG({
-        dbgs() << "    commuted NewMode=";
-        NewModeCommuted.print(dbgs());
-        dbgs() << " compatible=" << CurrentMode.isCompatible(NewModeCommuted)
+        dbgs() << "    commuted NewMode=" << NewModeCommuted.print()
+               << " compatible=" << CurrentMode.isCompatible(NewModeCommuted)
                << '\n';
       });
       if (CurrentMode.isCompatible(NewModeCommuted)) {
@@ -520,10 +544,9 @@ bool AMDGPULowerVGPREncoding::handleSetregMode(MachineInstr &MI) {
 
   int64_t ModeValue = CurrentMode.encode();
   LLVM_DEBUG({
-    dbgs() << "    CurrentMode=";
-    CurrentMode.print(dbgs());
-    dbgs() << " encoded=0x" << Twine::utohexstr(ModeValue)
-           << " VGPRMSBShift=" << VGPRMSBShift << '\n';
+    dbgs() << "    CurrentMode=" << CurrentMode.print() << " encoded=0x"
+           << Twine::utohexstr(ModeValue) << " VGPRMSBShift=" << VGPRMSBShift
+           << '\n';
   });
 
   // Case 1: Size <= 12 - the original instruction uses imm32[0:Size-1], so
@@ -555,36 +578,115 @@ bool AMDGPULowerVGPREncoding::handleSetregMode(MachineInstr &MI) {
     return false;
   }
 
-  // imm32[12:19] doesn't match VGPR MSBs - insert s_set_vgpr_msb after
-  // the original instruction to restore the correct value. Insert S_NOP
-  // to avoid the GFX1250 hazard where S_SET_VGPR_MSB immediately after
-  // S_SETREG_IMM32_B32(MODE) is silently dropped.
-  MachineBasicBlock::iterator InsertPt = std::next(MI.getIterator());
-  BuildMI(*MBB, InsertPt, MI.getDebugLoc(), TII->get(AMDGPU::S_NOP)).addImm(0);
-  MostRecentModeSet = BuildMI(*MBB, InsertPt, MI.getDebugLoc(),
-                              TII->get(AMDGPU::S_SET_VGPR_MSB))
-                          .addImm(ModeValue | (ModeValue << ModeWidth));
-  LLVM_DEBUG(dbgs() << "    -> inserted S_SET_VGPR_MSB after setreg: "
-                    << *MostRecentModeSet);
+  // imm32[12:19] doesn't match VGPR MSBs - this is equivalent to settings VGPR
+  // MSBs to an unknwon state, so just reset the current mode.
+  CurrentMode = {};
   return true;
 }
 
-bool AMDGPULowerVGPREncoding::run(MachineFunction &MF) {
+namespace {
+struct MSBAtBounds {
+  MachineInstr *FirstModeSet = nullptr, *LastModeSet = nullptr;
+  ModeTy FirstMode = {}, LastMode = {};
+
+  void eraseFirstModeSet() {
+    FirstModeSet->eraseFromBundle();
+    if (FirstModeSet == LastModeSet)
+      LastModeSet = nullptr;
+    FirstModeSet = nullptr;
+  }
+
+  void eraseLastModeSet() {
+    LastModeSet->eraseFromBundle();
+    if (FirstModeSet == LastModeSet)
+      FirstModeSet = nullptr;
+    LastModeSet = nullptr;
+  }
+};
+} // namespace
+
+static bool canPiggybackOnPredecessors(
+    const ModeTy &ModeToPiggyback, const MachineBasicBlock &MBB,
+    const DenseMap<MachineBasicBlock *, MSBAtBounds> &Boundaries,
+    SmallPtrSetImpl<MachineBasicBlock *> &AllPredecessors) {
+
+  SmallVector<MachineBasicBlock *, 4> Predecessors(MBB.pred_begin(),
+                                                   MBB.pred_end());
+  while (!Predecessors.empty()) {
+    MachineBasicBlock &PredMBB = *Predecessors.pop_back_val();
+    if (!AllPredecessors.insert(&PredMBB).second)
+      continue;
+
+    const MSBAtBounds &BoundsOfPredMBB = Boundaries.at(&PredMBB);
+
+    LLVM_DEBUG({
+      dbgs() << "  predecessor BB#" << PredMBB.getNumber() << ' '
+             << PredMBB.getName() << ' ';
+      if (BoundsOfPredMBB.LastModeSet) {
+        dbgs() << "has LastMode=" << BoundsOfPredMBB.LastMode.print() << ' '
+               << *BoundsOfPredMBB.LastModeSet;
+      } else {
+        dbgs() << "has no last mode set to piggyback into\n";
+      }
+    });
+
+    if (!BoundsOfPredMBB.LastModeSet) {
+      // It is possible there is a first mode set even though there is no last
+      // mode set. It means that a S_SETREG_IMM32_B32(MODE) is clobbering the
+      // MSBs after all other mode sets, which prevents piggybacking.
+      if (BoundsOfPredMBB.FirstModeSet)
+        return false;
+
+      // Look at the block's predecessors recursively. If we reached the entry
+      // block and it had no mode set to piggyback into then we will not be able
+      // to piggyback into anything on at least one path to the block.
+      if (PredMBB.predecessors().empty())
+        return false;
+      for (MachineBasicBlock *PredPredMBB : PredMBB.predecessors())
+        Predecessors.push_back(PredPredMBB);
+      continue;
+    }
+
+    ModeTy PredMode = BoundsOfPredMBB.LastMode;
+    bool Override = false;
+    PredMode.update(ModeToPiggyback, Override);
+    if (Override) {
+      LLVM_DEBUG(dbgs() << "    couuld not piggyback "
+                        << ModeToPiggyback.print() << " into "
+                        << BoundsOfPredMBB.LastMode.print() << '\n');
+      return false;
+    }
+  }
+  return true;
+}
+
+bool AMDGPULowerVGPREncoding::run(MachineFunction &MF,
+                                  const MachineBlockFrequencyInfo *MBFI) {
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   if (!ST.has1024AddressableVGPRs())
     return false;
 
   TII = ST.getInstrInfo();
   TRI = ST.getRegisterInfo();
+  this->MBFI = MBFI;
 
   LLVM_DEBUG(dbgs() << "*** AMDGPULowerVGPREncoding on " << MF.getName()
                     << " ***\n");
 
+  DenseMap<MachineBasicBlock *, MSBAtBounds> Boundaries;
+
+  // For entry functions the mode is all-0 on entry. For other functions we
+  // conservatively assume we do not know the mode on entry.
+  const bool IsEntryMF = MF.getInfo<SIMachineFunctionInfo>()->isEntryFunction();
+  if (IsEntryMF)
+    CurrentMode = ModeTy(0);
+  else
+    CurrentMode = {};
+
   bool Changed = false;
   ClauseLen = ClauseRemaining = 0;
-  CurrentMode = {};
   for (auto &MBB : MF) {
-    MostRecentModeSet = nullptr;
+    MostRecentModeSet = FirstModeSetInMBB = nullptr;
     XCntIsZero = false;
     this->MBB = &MBB;
 
@@ -595,20 +697,20 @@ bool AMDGPULowerVGPREncoding::run(MachineFunction &MF) {
       if (MI.isMetaInstruction())
         continue;
 
-      if (MI.isTerminator() || MI.isCall()) {
-        LLVM_DEBUG(dbgs() << "  terminator/call: " << MI);
-        if (MI.getOpcode() == AMDGPU::S_ENDPGM ||
-            MI.getOpcode() == AMDGPU::S_ENDPGM_SAVED)
-          CurrentMode = {};
-        else
-          resetMode(MI.getIterator());
+      if (MI.isCall()) {
+        // We don't know whether the call will change the mode so we have to
+        // conservatively assume we no longer know what it is after it.
+        CurrentMode = {};
         continue;
       }
 
       if (MI.isInlineAsm()) {
         LLVM_DEBUG(dbgs() << "  inline asm: " << MI);
-        if (TII->hasVGPRUses(MI))
-          resetMode(MI.getIterator());
+        if (TII->hasVGPRUses(MI)) {
+          // Mode should be all-0 before inline assembly using VGPRs.
+          ModeTy ZeroMode(0);
+          setMode(ZeroMode, MI.getIterator());
+        }
         continue;
       }
 
@@ -647,12 +749,72 @@ bool AMDGPULowerVGPREncoding::run(MachineFunction &MF) {
         --ClauseRemaining;
     }
 
-    // Reset the mode if we are falling through.
-    LLVM_DEBUG(dbgs() << "  end of BB, resetting mode\n");
-    resetMode(MBB.instr_end());
+    MSBAtBounds &Bounds = Boundaries.try_emplace(&MBB).first->getSecond();
+    Bounds.FirstModeSet = FirstModeSetInMBB;
+    Bounds.FirstMode = FirstMode;
+
+    /// It is possible that FirstModeSet is nullptr but not LastModeSet if the
+    /// block ends in a S_SETREG_IMM32_B32(MODE) not followed by a
+    /// S_SET_VGPR_MSB. In that case CurrentMode is the default mode.
+    Bounds.LastModeSet = MostRecentModeSet;
+    Bounds.LastMode = CurrentMode;
+
+    // For all non-entry blocks we consider the mode at entry to be unknown.
+    CurrentMode = {};
+  }
+
+  for (const MachineBasicBlock &MBB : MF) {
+    MSBAtBounds &BoundsOfMBB = Boundaries.at(&MBB);
+    LLVM_DEBUG({
+      dbgs() << "BB#" << MBB.getNumber() << ' ' << MBB.getName()
+             << ": attempting first mode set piggybacking, FirstMode="
+             << BoundsOfMBB.FirstMode.print() << '\n';
+    });
+
+    if (MBB.isEntryBlock() || !BoundsOfMBB.FirstModeSet)
+      continue;
+
+    SmallPtrSet<MachineBasicBlock *, 4> AllPredecessors;
+    if (!canPiggybackOnPredecessors(BoundsOfMBB.FirstMode, MBB, Boundaries,
+                                    AllPredecessors))
+      continue;
+
+    LLVM_DEBUG(
+        dbgs()
+        << "  able to piggyback first S_SET_VGPR_MSB into predecessors\n");
+
+    for (MachineBasicBlock *PredMBB : AllPredecessors) {
+      MSBAtBounds &BoundsOfPredMBB = Boundaries.at(PredMBB);
+      if (!BoundsOfPredMBB.FirstModeSet)
+        continue;
+      bool Override = false;
+      BoundsOfPredMBB.LastMode.update(BoundsOfMBB.FirstMode, Override);
+      assert(!Override && "modes cannot conflict");
+      piggyback(*BoundsOfPredMBB.LastModeSet, BoundsOfPredMBB.LastMode);
+    }
+
+    // TODO: check first mode set to next mode set in block in the other case?
+    BoundsOfMBB.eraseFirstModeSet();
   }
 
   return Changed;
+
+  // if (!IsEntryMF)
+  //   return Changed;
+
+  // // MSBs are all zero on kernel entry. A S_SET_VGPR_MSB that sets all MSBs
+  // to
+  // // zero in the entry block is thus useless.
+  // MachineBasicBlock &EntryMBB = *MF.begin();
+  // MSBAtBounds &EntryBounds = Boundaries.at(&EntryMBB);
+  // if (EntryBounds.FirstModeSet &&
+  //     all_of(EntryBounds.FirstMode.Ops,
+  //            [](const OpMode &Mode) { return Mode.MSBits.value_or(0) == 0;
+  //            })) {
+  //   LLVM_DEBUG(dbgs() << "Deleting first all-0 mode set in entry block\n");
+  //   EntryBounds.eraseFirstModeSet();
+  // }
+  // return Changed;
 }
 
 class AMDGPULowerVGPREncodingLegacy : public MachineFunctionPass {
@@ -662,11 +824,15 @@ public:
   AMDGPULowerVGPREncodingLegacy() : MachineFunctionPass(ID) {}
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    return AMDGPULowerVGPREncoding().run(MF);
+    const MachineBlockFrequencyInfo &MBFI =
+        getAnalysis<MachineBlockFrequencyInfoWrapperPass>().getMBFI();
+    return AMDGPULowerVGPREncoding().run(MF, &MBFI);
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
+    AU.addRequired<MachineBlockFrequencyInfoWrapperPass>();
+    AU.addPreserved<MachineBlockFrequencyInfoWrapperPass>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 };
@@ -683,8 +849,12 @@ INITIALIZE_PASS(AMDGPULowerVGPREncodingLegacy, DEBUG_TYPE,
 PreservedAnalyses
 AMDGPULowerVGPREncodingPass::run(MachineFunction &MF,
                                  MachineFunctionAnalysisManager &MFAM) {
-  if (!AMDGPULowerVGPREncoding().run(MF))
+  const auto &MBFI = MFAM.getResult<MachineBlockFrequencyAnalysis>(MF);
+  if (!AMDGPULowerVGPREncoding().run(MF, &MBFI))
     return PreservedAnalyses::all();
 
-  return getMachineFunctionPassPreservedAnalyses().preserveSet<CFGAnalyses>();
+  auto PA = getMachineFunctionPassPreservedAnalyses();
+  PA.preserveSet<CFGAnalyses>();
+  PA.preserve<MachineBlockFrequencyAnalysis>();
+  return PA;
 }

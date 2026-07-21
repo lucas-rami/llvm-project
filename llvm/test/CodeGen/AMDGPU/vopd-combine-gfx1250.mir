@@ -6,6 +6,8 @@
 ---
 name:            vopd_combine_low_vgprs
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -37,6 +39,8 @@ body:             |
 ---
 name:            vopd_combine_hi_vgprs
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -60,7 +64,6 @@ body:             |
     ; LOWER-NEXT: $vgpr303, $vgpr306 = V_DUAL_SUB_F32_e32_X_MUL_F32_e32_gfx1250 $vgpr301, $vgpr301, $vgpr300, $vgpr300, implicit $mode, implicit $exec, implicit $mode, implicit $exec, implicit $mode, implicit $exec
     ; LOWER-NEXT: S_SET_VGPR_MSB 17669, implicit-def $mode
     ; LOWER-NEXT: $vgpr4 = V_BFM_B32_e32 $vgpr300, $vgpr301, implicit $exec
-    ; LOWER-NEXT: S_SET_VGPR_MSB 1280, implicit-def $mode
     $vgpr300 = IMPLICIT_DEF
     $vgpr301 = IMPLICIT_DEF
     $vgpr303 = V_SUB_F32_e32 $vgpr301, $vgpr301, implicit $mode, implicit $exec
@@ -71,6 +74,8 @@ body:             |
 ---
 name:            vopd_combine_hi_vgprs_above_512
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -94,7 +99,6 @@ body:             |
     ; LOWER-NEXT: $vgpr559, $vgpr562 = V_DUAL_SUB_F32_e32_X_MUL_F32_e32_gfx1250 $vgpr813, $vgpr813, $vgpr812, $vgpr812, implicit $mode, implicit $exec, implicit $mode, implicit $exec, implicit $mode, implicit $exec
     ; LOWER-NEXT: S_SET_VGPR_MSB 36623, implicit-def $mode
     ; LOWER-NEXT: $vgpr4 = V_BFM_B32_e32 $vgpr812, $vgpr813, implicit $exec
-    ; LOWER-NEXT: S_SET_VGPR_MSB 3840, implicit-def $mode
     $vgpr812 = IMPLICIT_DEF
     $vgpr813 = IMPLICIT_DEF
     $vgpr559 = V_SUB_F32_e32 $vgpr813, $vgpr813, implicit $mode, implicit $exec
@@ -105,6 +109,8 @@ body:             |
 ---
 name:            mixed_vgprs_low_and_hi_dst
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -140,6 +146,8 @@ body:             |
 ---
 name:            mixed_vgprs_low_and_hi_scr0
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -167,7 +175,6 @@ body:             |
     ; LOWER-NEXT: $vgpr4 = V_BFM_B32_e32 $vgpr0, killed $vgpr1, implicit $exec
     ; LOWER-NEXT: S_SET_VGPR_MSB 1, implicit-def $mode
     ; LOWER-NEXT: $vgpr6 = V_MUL_F32_e32 $vgpr300, killed $vgpr0, implicit $mode, implicit $exec
-    ; LOWER-NEXT: S_SET_VGPR_MSB 256, implicit-def $mode
     $vgpr0 = IMPLICIT_DEF
     $vgpr1 = IMPLICIT_DEF
     $vgpr300 = IMPLICIT_DEF
@@ -179,6 +186,8 @@ body:             |
 ---
 name:            mixed_vgprs_low_and_hi_scr1
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -208,7 +217,6 @@ body:             |
     ; LOWER-NEXT: $vgpr4 = V_BFM_B32_e32 $vgpr0, killed $vgpr1, implicit $exec
     ; LOWER-NEXT: S_SET_VGPR_MSB 1, implicit-def $mode
     ; LOWER-NEXT: $vgpr6 = V_MUL_F32_e32 $vgpr300, killed $vgpr0, implicit $mode, implicit $exec
-    ; LOWER-NEXT: S_SET_VGPR_MSB 256, implicit-def $mode
     $vgpr0 = IMPLICIT_DEF
     $vgpr1 = IMPLICIT_DEF
     $vgpr300 = IMPLICIT_DEF
@@ -220,6 +228,8 @@ body:             |
 ---
 name:            mixed_vgprs_hi_and_hi_dst_different_msb
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -242,7 +252,6 @@ body:             |
     ; LOWER-NEXT: $vgpr559 = V_SUB_F32_e32 killed $vgpr1, $vgpr1, implicit $mode, implicit $exec
     ; LOWER-NEXT: S_SET_VGPR_MSB 32832, implicit-def $mode
     ; LOWER-NEXT: $vgpr303 = V_MUL_F32_e32 killed $vgpr0, $vgpr0, implicit $mode, implicit $exec
-    ; LOWER-NEXT: S_SET_VGPR_MSB 16384, implicit-def $mode
     $vgpr0 = IMPLICIT_DEF
     $vgpr1 = IMPLICIT_DEF
     $vgpr559 = V_SUB_F32_e32 $vgpr1, $vgpr1, implicit $mode, implicit $exec
@@ -252,6 +261,8 @@ body:             |
 ---
 name:            mixed_vgprs_low_and_hi_scr0_different_msb
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -280,7 +291,6 @@ body:             |
     ; LOWER-NEXT: $vgpr3 = V_SUB_F32_e32 $vgpr513, killed $vgpr1, implicit $mode, implicit $exec
     ; LOWER-NEXT: S_SET_VGPR_MSB 515, implicit-def $mode
     ; LOWER-NEXT: $vgpr6 = V_MUL_F32_e32 $vgpr812, killed $vgpr0, implicit $mode, implicit $exec
-    ; LOWER-NEXT: S_SET_VGPR_MSB 768, implicit-def $mode
     $vgpr0 = IMPLICIT_DEF
     $vgpr1 = IMPLICIT_DEF
     $vgpr513 = IMPLICIT_DEF
@@ -292,6 +302,8 @@ body:             |
 ---
 name:            vopd_combine_sgpr_src0
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -333,6 +345,8 @@ body:             |
 ---
 name:            vopd_combine_imm_src0
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -370,6 +384,8 @@ body:             |
 ---
 name:            vopd_mov_max_i32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -401,6 +417,8 @@ body:             |
 ---
 name:            vopd_mov_min_i32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -432,6 +450,8 @@ body:             |
 ---
 name:            vopd_no_combine_max_i32_max_i32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -461,6 +481,8 @@ body:             |
 ---
 name:            vopd_no_combine_min_i32_min_i32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -490,6 +512,8 @@ body:             |
 ---
 name:            vopd_mov_sub_nc_i32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -521,6 +545,8 @@ body:             |
 ---
 name:            vopd_mov_lshrrev_b32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -552,6 +578,8 @@ body:             |
 ---
 name:            vopd_mov_ashrrev_i32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -583,6 +611,8 @@ body:             |
 ---
 name:            vopd_no_combine_same_vgprs_banks
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -620,6 +650,8 @@ body:             |
 ---
 name:            vopd_combine_same_vgprs
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -651,6 +683,8 @@ body:             |
 ---
 name:            vopd_combine_same_dst_parity
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -682,6 +716,8 @@ body:             |
 ---
 name:            vopd_combine_x_fmaak
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -713,6 +749,8 @@ body:             |
 ---
 name:            vopd_combine_y_fmaak
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -744,6 +782,8 @@ body:             |
 ---
 name:            vopd_no_combine_x_fmaak_same_dst_parity
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -777,6 +817,8 @@ body:             |
 ---
 name:            vopd_no_combine_y_fmaak_same_dst_parity
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -810,6 +852,8 @@ body:             |
 ---
 name:            vopd_combine_literal_x
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -841,6 +885,8 @@ body:             |
 ---
 name:            vopd_combine_literal_y
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -874,6 +920,8 @@ body:             |
 ---
 name:            vopd_no_combine_literal_x
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -907,6 +955,8 @@ body:             |
 ---
 name:            vopd_no_combine_literal_y
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -940,6 +990,8 @@ body:             |
 ---
 name:            vopd_combine_add_u32_add_f32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -979,6 +1031,8 @@ body:             |
 ---
 name:            vopd_combine_add_f32_add_u32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1018,6 +1072,8 @@ body:             |
 ---
 name:            vopd_combine_add_u32_add_f32_same_dst_parity
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1053,6 +1109,8 @@ body:             |
 ---
 name:            vopd_combine_add_f32_add_u32_same_dst_parity
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1088,6 +1146,8 @@ body:             |
 ---
 name:            vopd_combine_lshl_lshl
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1123,6 +1183,8 @@ body:             |
 ---
 name:            vopd_combine_ashr_ashr
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1158,6 +1220,8 @@ body:             |
 ---
 name:            vopd_combine_lshr_lshr
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1183,7 +1247,6 @@ body:             |
     ; LOWER-NEXT: $vgpr303 = IMPLICIT_DEF
     ; LOWER-NEXT: S_SET_VGPR_MSB 69, implicit-def $mode
     ; LOWER-NEXT: $vgpr304, $vgpr305 = V_DUAL_LSHRREV_B32_e32_X_LSHRREV_B32_e32_e96_gfx1250 $vgpr300, $vgpr301, $vgpr302, $vgpr303, implicit $exec, implicit $exec, implicit $mode, implicit $exec
-    ; LOWER-NEXT: S_SET_VGPR_MSB 17664, implicit-def $mode
     $vgpr300 = IMPLICIT_DEF
     $vgpr301 = IMPLICIT_DEF
     $vgpr302 = IMPLICIT_DEF
@@ -1195,6 +1258,8 @@ body:             |
 ---
 name:            vopd_combine_sub_u32_sub_u32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1230,6 +1295,8 @@ body:             |
 ---
 name:            vopd_no_combine_sub_u32_sub_u32_lit
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1263,6 +1330,8 @@ body:             |
 ---
 name:            vopd_combine_fmac_fmac
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1298,6 +1367,8 @@ body:             |
 ---
 name:            vopd_combine_fmac_fmac_same_dst_parity
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1333,6 +1404,8 @@ body:             |
 ---
 name:            vopd_no_combine_fmac_fmac_same_dst
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1366,6 +1439,8 @@ body:             |
 ---
 name:            vopd_no_combine_add_f32_fadd_f32_same_dst
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1395,6 +1470,8 @@ body:             |
 ---
 name:            vopd_combine_add_f64_add_f32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1438,6 +1515,8 @@ body:             |
 ---
 name:            vopd_combine_add_f32_add_f64
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1481,6 +1560,8 @@ body:             |
 ---
 name:            vopd_no_combine_add_f64_add_f64
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1530,6 +1611,8 @@ body:             |
 ---
 name:            vopd_no_combine_add_f64_add_f32_overlapping_dst
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1575,6 +1658,8 @@ body:             |
 ---
 name:            vopd_no_combine_add_f64_add_f32_overlapping_src_sub1
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1612,6 +1697,8 @@ body:             |
 ---
 name:            vopd_no_combine_add_f64_add_f32_overlapping_src_sub0
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1649,6 +1736,8 @@ body:             |
 ---
 name:            vopd_combine_fma_fma
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1696,6 +1785,8 @@ body:             |
 ---
 name:            vopd_no_combine_fma_fma_bank_conflict_src2
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1745,6 +1836,8 @@ body:             |
 ---
 name:            vopd_combine_fma_add_f32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1788,6 +1881,8 @@ body:             |
 ---
 name:            vopd_combine_add_f32_fma
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1831,6 +1926,8 @@ body:             |
 ---
 name:            vopd_combine_fma_add_f64
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1874,6 +1971,8 @@ body:             |
 ---
 name:            vopd_no_combine_fma_src0_mod_fma
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1923,6 +2022,8 @@ body:             |
 ---
 name:            vopd_no_combine_fma_fma_src1_mod
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -1972,6 +2073,8 @@ body:             |
 ---
 name:            vopd_no_combine_fma_fma_src2_mod
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2021,6 +2124,8 @@ body:             |
 ---
 name:            vopd_no_combine_fma_clamp_fma
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2070,6 +2175,8 @@ body:             |
 ---
 name:            vopd_no_combine_fma_fma_omod
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2119,6 +2226,8 @@ body:             |
 ---
 name:            vopd_combine_fma_fma_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2166,6 +2275,8 @@ body:             |
 ---
 name:            vopd_combine_fma_fma_src0_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2213,6 +2324,8 @@ body:             |
 ---
 name:            vopd_combine_fma_fma_src1_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2260,6 +2373,8 @@ body:             |
 ---
 name:            vopd_combine_fma_fma_src2_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2307,6 +2422,8 @@ body:             |
 ---
 name:            vopd_combine_fma_f64_fma_f32_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2354,6 +2471,8 @@ body:             |
 ---
 name:            vopd_combine_lshl_add_u64_fma
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2403,6 +2522,8 @@ body:             |
 ---
 name:            vopd_combine_fma_lshl_add_u64
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2452,6 +2573,8 @@ body:             |
 ---
 name:            vopd_no_combine_lshl_add_u64_fma_overlapping_src2
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2497,6 +2620,8 @@ body:             |
 ---
 name:            vopd_no_combine_lshl_add_u64_fma_src0_conflict
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2546,6 +2671,8 @@ body:             |
 ---
 name:            vopd_no_combine_lshl_add_u64_fma_src1_conflict
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2595,6 +2722,8 @@ body:             |
 ---
 name:            vopd_combine_fma_f64_fma_f32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2642,6 +2771,8 @@ body:             |
 ---
 name:            vopd_no_combine_fma_f64_fma_f32_overlapping_src1
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2687,6 +2818,8 @@ body:             |
 ---
 name:            vopd_combine_fma_f32_add_f64_e32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2730,6 +2863,8 @@ body:             |
 ---
 name:            vopd_combine_fma_f32_add_f64_e64
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2773,6 +2908,8 @@ body:             |
 ---
 name:            vopd_combine_fma_f32_add_f64_e64_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2816,6 +2953,8 @@ body:             |
 ---
 name:            vopd_combine_fma_bitop
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2860,6 +2999,8 @@ body:             |
 ---
 name:            vopd_combine_fma_bitop_2_scalar_src
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2903,6 +3044,8 @@ body:             |
 ---
 name:            vopd_combine_bitop_mov_b32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2938,6 +3081,8 @@ body:             |
 ---
 name:            vopd_no_combine_mov_b32_bitop_non_imm_src2
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -2975,6 +3120,8 @@ body:             |
 ---
 name:            vopd_no_combine_mov_b32_bitop_non_zero_src2
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3012,6 +3159,8 @@ body:             |
 ---
 name: vopd_no_combine_bitop3_mov_dpp_vgpr_src2
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     ; SCHED-LABEL: name: vopd_no_combine_bitop3_mov_dpp_vgpr_src2
@@ -3049,6 +3198,8 @@ body:             |
 ---
 name:            vopd_combine_mov_or
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3084,6 +3235,8 @@ body:             |
 ---
 name:            vopd_combine_mov_and
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3119,6 +3272,8 @@ body:             |
 ---
 name:            vopd_combine_mov_xor
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3154,6 +3309,8 @@ body:             |
 ---
 name:            vopd_combine_mov_xnor
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3192,6 +3349,8 @@ body:             |
 ---
 name:            vopd_combine_mov_not
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3225,6 +3384,8 @@ body:             |
 ---
 name:            vopd_combine_fadd_not
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3262,6 +3423,8 @@ body:             |
 ---
 name:            vopd_combine_fadd_f64_not
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3299,6 +3462,8 @@ body:             |
 ---
 name:            vopd_no_combine_src1_imm
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3348,6 +3513,8 @@ body:             |
 ---
 name:            vopd_no_combine_src2_imm
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3397,6 +3564,8 @@ body:             |
 ---
 name:            vopd_no_combine_src1_sgpr
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3450,6 +3619,8 @@ body:             |
 ---
 name:            vopd_no_combine_src2_sgpr
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3503,6 +3674,8 @@ body:             |
 ---
 name:            vopd_combine_cndmask_fadd
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     liveins: $vcc_lo
@@ -3549,6 +3722,8 @@ body:             |
 ---
 name:            vopd_combine_cndmask_fma
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     liveins: $vcc_lo
@@ -3599,6 +3774,8 @@ body:             |
 ---
 name:            vopd_combine_cndmask_e64_vcc_fadd
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3642,6 +3819,8 @@ body:             |
 ---
 name:            vopd_combine_cndmask_e64_sgpr_fadd
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3685,6 +3864,8 @@ body:             |
 ---
 name:            vopd_combine_cndmask_e64_neg_vcc_fadd
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3728,6 +3909,8 @@ body:             |
 ---
 name:            vopd_no_combine_cndmask_e64_vcc_fadd_constant_bus_limit
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3777,6 +3960,8 @@ body:             |
 ---
 name:            vopd_no_combine_cndmask_e64_vcc_fadd_sgpr_src1
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -3826,6 +4011,8 @@ body:             |
 ---
 name:            vopd_combine_cndmask_e64_cndmask_e32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     liveins: $vcc_lo
@@ -3876,6 +4063,8 @@ body:             |
 ---
 name:            vopd_combine_cndmask_e32_cndmask_e64
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     liveins: $vcc_lo
@@ -3926,6 +4115,8 @@ body:             |
 ---
 name:            vopd_combine_cndmask_e32_cndmask_e32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
     liveins: $vcc_lo
@@ -3976,6 +4167,8 @@ body:             |
 ---
 name:            vopd_combine_cndmask_e64_cndmask_e64
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4023,6 +4216,8 @@ body:             |
 ---
 name:            vopd_combine_fadd_e64_fadd_e64
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4062,6 +4257,8 @@ body:             |
 ---
 name:            vopd_combine_fadd_e64_neg_fadd_e32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4101,6 +4298,8 @@ body:             |
 ---
 name:            vopd_no_combine_fadd_e64_abs_neg_fadd_e32
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4142,6 +4341,8 @@ body:             |
 ---
 name:            vopd_combine_mul_f64_e64_sub_f32_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4181,6 +4382,8 @@ body:             |
 ---
 name:            vopd_combine_mul_f64_e32_subrev_f32_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4220,6 +4423,8 @@ body:             |
 ---
 name:            vopd_combine_min_num_f64_e64_mul_f32_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4259,6 +4464,8 @@ body:             |
 ---
 name:            vopd_combine_min_num_f64_e32_mul_legacy_f32_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4298,6 +4505,8 @@ body:             |
 ---
 name:            vopd_combine_max_num_f64_e64_min_f32_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4337,6 +4546,8 @@ body:             |
 ---
 name:            vopd_combine_max_num_f64_e32_max_f32_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4376,6 +4587,8 @@ body:             |
 ---
 name:            vopd_combine_add_f64_fmac_f32_e64_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4419,6 +4632,8 @@ body:             |
 ---
 name:            vopd_combine_cndmask_e64_neg_cndmask_e64_neg
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4458,6 +4673,8 @@ body:             |
 ---
 name: vopd_no_combine_dpp
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body: |
   bb.0:
     liveins: $vgpr0, $vgpr1, $vgpr2
@@ -4485,6 +4702,8 @@ body: |
 ---
 name: vopd_no_combine_fmamk_src1
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body: |
   bb.0:
     ; SCHED-LABEL: name: vopd_no_combine_fmamk_src1
@@ -4497,7 +4716,6 @@ body: |
     ; LOWER-LABEL: name: vopd_no_combine_fmamk_src1
     ; LOWER: S_SET_VGPR_MSB 5, implicit-def $mode
     ; LOWER-NEXT: $vgpr142, $vgpr145 = V_DUAL_FMAMK_F32_X_FMAC_F32_e32_gfx1250 $vgpr377, 1069066811, $vgpr142, 1069066811, $vgpr366, $vgpr145, implicit $mode, implicit $exec, implicit $mode, implicit $exec, implicit $mode, implicit $exec
-    ; LOWER-NEXT: S_SET_VGPR_MSB 1280, implicit-def $mode
     $vgpr142 = V_FMAMK_F32 $vgpr377, 1069066811, $vgpr142, implicit $mode, implicit $exec
     $vgpr145 = V_FMAC_F32_e32 1069066811, $vgpr366, $vgpr145, implicit $mode, implicit $exec
 ...
@@ -4505,6 +4723,8 @@ body: |
 ---
 name:            no_combine_opx_writes_opy_src
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4538,6 +4758,8 @@ body:             |
 ---
 name:            combine_opx_writes_opy_src_reorder_antidep
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 
@@ -4569,6 +4791,8 @@ body:             |
 ---
 name:            no_combine_add_f64_fmac_f32_e64_neg_overlap_dst
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
 

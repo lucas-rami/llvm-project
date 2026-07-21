@@ -4,6 +4,8 @@
 ---
 name:            multi
 tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
 body:             |
   bb.0:
   liveins: $vgpr10, $vgpr11, $vgpr900, $vgpr901
@@ -54,6 +56,7 @@ body:             |
     ; CHECK-LABEL: name: no_control
     ; CHECK: liveins: $vgpr10, $vgpr11, $vgpr900, $vgpr901
     ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: S_SET_VGPR_MSB 0, implicit-def $mode
     ; CHECK-NEXT: $vgpr11 = nofpexcept V_EXP_F32_e32 killed $vgpr10, implicit $mode, implicit $exec
     ; CHECK-NEXT: S_SET_VGPR_MSB 65, implicit-def $mode
     ; CHECK-NEXT: $vgpr256 = nofpexcept V_EXP_F32_e32 killed $vgpr257, implicit $mode, implicit $exec
@@ -94,6 +97,7 @@ body:             |
     ; CHECK-LABEL: name: xcnt
     ; CHECK: liveins: $vgpr10, $vgpr257
     ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: S_SET_VGPR_MSB 0, implicit-def $mode
     ; CHECK-NEXT: $vgpr11 = nofpexcept V_EXP_F32_e32 killed $vgpr10, implicit $mode, implicit $exec
     ; CHECK-NEXT: S_SET_VGPR_MSB 65, implicit-def $mode
     ; CHECK-NEXT: $vgpr256 = nofpexcept V_EXP_F32_e32 killed $vgpr257, implicit $mode, implicit $exec
@@ -113,6 +117,7 @@ body:             |
     ; CHECK-LABEL: name: asynccnt
     ; CHECK: liveins: $vgpr10, $vgpr257
     ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: S_SET_VGPR_MSB 0, implicit-def $mode
     ; CHECK-NEXT: $vgpr11 = nofpexcept V_EXP_F32_e32 killed $vgpr10, implicit $mode, implicit $exec
     ; CHECK-NEXT: S_WAIT_ASYNCCNT 0, implicit $asynccnt, implicit-def $asynccnt
     ; CHECK-NEXT: S_SET_VGPR_MSB 65, implicit-def $mode
