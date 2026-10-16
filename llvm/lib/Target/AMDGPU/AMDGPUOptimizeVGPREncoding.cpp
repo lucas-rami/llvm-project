@@ -416,6 +416,10 @@ public:
   /// exhibit a conflict as a result of the change.
   void regChangedGroup(OptReg &Reg, BitVector &ScoreChanged);
 
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+  Printable print(const VirtRegMap &VRM) const;
+#endif
+
 private:
   /// Result of BitVector::find* methods when no bit was found.
   static constexpr int NoBit = -1;
@@ -530,22 +534,17 @@ public:
   /// The optimizable register.
   OptReg &Reg;
 
-  /// Set bits indicate MSB groups with the highest score and more desirable
-  /// than the current one the register is in i.e., target groups. No targets
-  /// mean the register is in the best group already.
-  SmallBitVector Targets;
+  struct Target {
+    MSBGroup Group;
+    int Benefit;
+    /// State of pinned neighbors around the register.
+    PinState PS;
+  };
 
-  /// State of pinned neighbors around the register. Only relevant when the
-  /// candidate has at least one target.
-  PinState NeighboringPins;
-
-  /// The overall estimated benefit in re-assigning the register to one of the
-  /// target groups. Higher is better. A negative benefit is still desirable.
-  /// Only relevant when the candidate has at least one target.
-  int Benefit;
+  SmallVector<Target, NumMSBGroups> Targets;
 
   /// Creates the candidate for \p Reg.
-  OptRegCandidate(OptReg &Reg) : Reg(Reg), Targets(NumMSBGroups) {
+  OptRegCandidate(OptReg &Reg) : Reg(Reg) {
     assert(!Reg.isPinned() && "register cannot be pinned initially");
     recomputeTargets();
   }
@@ -553,10 +552,14 @@ public:
   /// Re-computes the candidate's target groups and potential benefit.
   void recomputeTargets();
 
+  MSBGroup getTopTarget() const { return Targets.back().Group; }
+
+  void failedTopTarget() { return Targets.pop_back(); }
+
   /// Whether the candidate has a profitable re-assignment to any MSB group
   /// i.e., a re-assigment that will strictly increase the combined score of all
   /// optimizable registers.
-  bool isProfitable() const { return Targets.any(); }
+  bool isProfitable() const { return !Targets.empty(); }
 
   /// Returns the current epoch.
   unsigned getEpoch() const { return Epoch; }
@@ -572,6 +575,7 @@ public:
   bool operator<(const OptRegCandidate &Other) const;
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+  Printable printTarget(const Target &Tgt) const;
   Printable print(const VirtRegMap &VRM) const;
 #endif
 
@@ -598,7 +602,7 @@ public:
   }
 
   /// If \p Reg is a candidate, update its score and re-sort the heap.
-  void reorderIfExists(const OptReg &Reg);
+  void reorderIfExists(const OptReg &Reg, bool RecomputeTargets);
 
   /// Returns whether the heap is empty.
   bool empty() const { return HeapToSlot.empty(); }
@@ -660,9 +664,8 @@ public:
   }
 
   /// Attempts to re-assign virtual register \p Reg to an available physical
-  /// register in any of the MSB groups indicated by set bits in \p
-  /// TargetGroups. Returns whether any re-assignment took place.
-  bool tryReAssign(OptReg &Reg, const SmallBitVector &TargetGroups);
+  /// register in \p Group. Returns whether any re-assignment took place.
+  bool tryReAssign(OptReg &Reg, MSBGroup Group);
 
   /// Determines whether register \p PhysReg in class \p RC crosses an MSB group
   /// boundary.
@@ -1053,7 +1056,7 @@ MSBGroup ModeSetOptimizer::selectPreferredMSBGroup(const OptReg &Reg) const {
     // Among MSB groups with the same number of pinned neighbors, favor the one
     // with highest number of unpinned neighbors.
     unsigned TotalScore = Reg.getGroupScore(Group);
-    if (PinnedScore == MaxPinnedScore && MaxTotalScore > TotalScore)
+    if (PinnedScore == MaxPinnedScore && MaxTotalScore >= TotalScore)
       continue;
 
     BestGroup = Group;
@@ -1070,6 +1073,9 @@ void ModeSetOptimizer::placeJustBefore(unsigned MBBIdx, unsigned InstrIdx) {
                               MBB.getFirstInstrFrom(InstrIdx, Oprd), Oprd);
   }
   ModeSetPlacement[MBBIdx].set(InstrIdx);
+  LLVM_DEBUG(dbgs() << "  | Placed MODE-set before MODE-using instruction "
+                    << InstrIdx << " in MBB#"
+                    << ModeUsage[MBBIdx].MBB.getNumber() << '\n');
 }
 
 void ModeSetOptimizer::placeJustAfter(unsigned MBBIdx, unsigned InstrIdx) {
@@ -1079,6 +1085,9 @@ void ModeSetOptimizer::placeJustAfter(unsigned MBBIdx, unsigned InstrIdx) {
                               MBB.getFirstInstrAfter(InstrIdx, Oprd), Oprd);
   }
   ModeSetPlacement[MBBIdx].set(InstrIdx + 1);
+  LLVM_DEBUG(dbgs() << "  | Placed MODE-set after MODE-using instruction "
+                    << InstrIdx << " in MBB#"
+                    << ModeUsage[MBBIdx].MBB.getNumber() << '\n');
 }
 
 void ModeSetOptimizer::breakNeighborRelationship(unsigned MBBIdx,
@@ -1093,16 +1102,20 @@ void ModeSetOptimizer::breakNeighborRelationship(unsigned MBBIdx,
     // This may break the relationship between an optimizable register and the
     // entry block pin.
     Register BeforeReg = Instructions[BeforeIdx].Oprds[Oprd];
-    if (OptRegs[BeforeReg] && !hasModeSetBefore(MBBIdx, BeforeIdx))
+    if (OptRegs[BeforeReg] && !hasModeSetBefore(MBBIdx, BeforeIdx)) {
       OptRegs[BeforeReg]->removeBlockBoundaryPin();
+      CheckShouldBePinned.set(BeforeReg.virtRegIndex());
+    }
     return;
   }
   if (BeforeIdx == ModeInstr::NoIdx) {
     // This may break the relationship between an optimizable register and the
     // exit block pin.
     Register AfterReg = Instructions[AfterIdx].Oprds[Oprd];
-    if (OptRegs[AfterReg] && !hasModeSetAfter(MBBIdx, AfterIdx))
+    if (OptRegs[AfterReg] && !hasModeSetAfter(MBBIdx, AfterIdx)) {
       OptRegs[AfterReg]->removeBlockBoundaryPin();
+      CheckShouldBePinned.set(AfterReg.virtRegIndex());
+    }
     return;
   }
   assert(AfterIdx < BeforeIdx && "incoherent indices");
@@ -1127,7 +1140,6 @@ void ModeSetOptimizer::breakNeighborRelationship(unsigned MBBIdx,
   if (AfterOptReg && BeforeOptReg) {
     AfterOptReg->removeNeighborOccurrence(*BeforeOptReg);
     BeforeOptReg->removeNeighborOccurrence(*AfterOptReg);
-    CheckShouldBePinned.set(AfterReg.virtRegIndex());
     CheckShouldBePinned.set(BeforeReg.virtRegIndex());
   } else if (AfterOptReg) {
     AfterOptReg->removePhysNeighborOccurrence(BeforeReg, VRM);
@@ -1168,7 +1180,7 @@ void ModeSetOptimizer::resolveConflictWithNeighbor(
     if ((this->*HasModeSetBetween)(MBBIdx, InstrIdx))
       return;
 
-    LLVM_DEBUG(dbgs() << "    Resolving default pin " << printOprdType(Oprd)
+    LLVM_DEBUG(dbgs() << "    Resolving default pin for " << printOprdType(Oprd)
                       << " in MBB#" << MBB.MBB.getNumber() << '\n');
     (this->*PlaceAround)(MBBIdx, InstrIdx);
     return;
@@ -1218,7 +1230,7 @@ bool ModeSetOptimizer::resolveConflictingPins(OptReg &Reg) {
                                                             Position);
   }
 
-  LLVM_DEBUG(dbgs() << "  | Updated register: " << Reg.print(VRM) << '\n');
+  LLVM_DEBUG(dbgs() << "  | New register score: " << Reg.print(VRM) << '\n');
 
   // It is possible that the number of pinned groups was reduced to zero when
   // all of the preferred group's pins were close to other groups' respective
@@ -1241,8 +1253,6 @@ bool ModeSetOptimizer::pinIfEligible(OptReg &Reg) {
   if (Reg.isPinned() || !shouldBePinned(Reg))
     return false;
   Reg.pinMSBGroup();
-  LLVM_DEBUG(dbgs() << "  Pinned " << Reg.print(VRM) << " to "
-                    << printGroup(Reg.getMSB()) << '\n');
   // Neighbors of registers which became pinned may now have conflicts.
   for (const auto &[NeighborReg, _] : Reg.getNeighbors())
     CheckResolveConflict.set(NeighborReg->getVirtIndex());
@@ -1253,12 +1263,18 @@ void ModeSetOptimizer::regChangedGroup(OptReg &Reg, BitVector &ScoreChanged) {
   // The candidate register and its neighbors had their score changed; they may
   // also be eligible for pinning.
   pinIfEligible(Reg);
+  LLVM_DEBUG({
+    if (Reg.isPinned())
+      dbgs() << "  | Pinned " << Reg.print(VRM) << '\n';
+  });
   ScoreChanged.set(Reg.getVirtIndex());
 
   for (const auto &[NeighborReg, _] : Reg.getNeighbors()) {
     ScoreChanged.set(NeighborReg->getVirtIndex());
     if (!pinIfEligible(*NeighborReg))
       continue;
+    LLVM_DEBUG(dbgs() << "  | Pinned " << NeighborReg->print(VRM) << '\n');
+
     // Pinning a register impacts its neighbors' respective score. However, they
     // cannot become newly pinnable themselves because pin-eligibility is
     // independent of whether score contributions come from pinned or unpinned
@@ -1276,8 +1292,13 @@ bool ModeSetOptimizer::resolveConflictsAndPinRegs() {
   bool AnyChange = false;
   do {
     // Pin eligible registers.
-    for (unsigned VirtRegIdx : CheckShouldBePinned.set_bits())
-      AnyChange |= pinIfEligible(OptRegs[VirtRegIdx]);
+    for (unsigned VirtRegIdx : CheckShouldBePinned.set_bits()) {
+      if (!pinIfEligible(OptRegs[VirtRegIdx]))
+        continue;
+      LLVM_DEBUG(dbgs() << "  Pinned " << OptRegs[VirtRegIdx].print(VRM)
+                        << '\n');
+      AnyChange = true;
+    }
     CheckShouldBePinned.reset();
 
     // Conflict resolution.
@@ -1291,30 +1312,33 @@ bool ModeSetOptimizer::resolveConflictsAndPinRegs() {
 bool OptRegCandidate::operator<(const OptRegCandidate &Other) const {
   // Registers without targets are not useful candidates. Pinned registers have
   // no targets by construction so they get caught here as well.
-  if (Other.Targets.none())
-    return Targets.none();
-  if (Targets.none())
+  if (!Other.isProfitable())
+    return !isProfitable();
+  if (!isProfitable())
     return true;
 
   // Earlier/Smaller epoch wins.
   if (Epoch != Other.Epoch)
     return Other.Epoch < Epoch;
 
+  const Target &BestTarget = Targets.back();
+  const Target &OtherBestTarget = Other.Targets.back();
+
   // Bigger pin-state wins. This generally favors MSB group changes toward
   // groups with bigger number of pinned neighbors in.
-  if (NeighboringPins != Other.NeighboringPins)
-    return NeighboringPins < Other.NeighboringPins;
+  if (BestTarget.PS != OtherBestTarget.PS)
+    return BestTarget.PS < OtherBestTarget.PS;
 
   // Higher benefit wins.
-  if (Benefit != Other.Benefit)
-    return Benefit < Other.Benefit;
+  if (BestTarget.Benefit != OtherBestTarget.Benefit)
+    return BestTarget.Benefit < OtherBestTarget.Benefit;
 
   // Break ties with unique virtual register index.
   return Reg.getVirtIndex() < Other.Reg.getVirtIndex();
 }
 
 void OptRegCandidate::recomputeTargets() {
-  Targets.reset();
+  Targets.resize(0);
   if (Reg.isPinned())
     return;
 
@@ -1324,7 +1348,6 @@ void OptRegCandidate::recomputeTargets() {
     // have resolved them.
     return;
   }
-  const unsigned CurrentScore = Reg.getCurrentGroupScore();
 
   // The overall benefit of moving MSB group reflects the distribution of scores
   // over all MSB groups. We want to favor registers with highly unbalanced
@@ -1333,48 +1356,46 @@ void OptRegCandidate::recomputeTargets() {
   // neighborhood is roughly evenly split between all MSB groups are not that
   // profitable to re-assign, even if an MSB group with a higher score than the
   // current one the register is in exists.
-  Benefit = CurrentScore;
-  unsigned MaxGroupScore = CurrentScore;
-  for (MSBGroup Group : seq(NumMSBGroups)) {
-    if (Group == Reg.getMSB())
-      continue;
-    const unsigned GroupScore = Reg.getGroupScore(Group);
-    if (GroupScore > MaxGroupScore) {
-      // The current best groups' score was counted positively once before, but
-      // we now want to count it negatively.
-      Benefit -= MaxGroupScore * 2;
-      // The new highest group score is counted positively.
-      Benefit += GroupScore;
-      // This group becomes the only target.
-      Targets.reset();
-      Targets.set(Group);
-      MaxGroupScore = GroupScore;
-      continue;
-    }
-    // GroupScore <= MaxGroupScore
+  unsigned TotalScore = 0;
+  for (MSBGroup Group : seq(NumMSBGroups))
+    TotalScore += Reg.getGroupScore(Group);
 
-    Benefit -= GroupScore;
-    // This group is a good target only when it has the highest score we have
-    // seen so far and that score is above the current group's score.
-    if (GroupScore != CurrentScore && GroupScore == MaxGroupScore)
-      Targets.set(Group);
+  const int CurrentScore = Reg.getCurrentGroupScore();
+  const unsigned CurrentPinnedScore = Reg.getGroupPinnedScore(Reg.getMSB());
+  for (MSBGroup Group : seq(NumMSBGroups)) {
+    const int GroupScore = Reg.getGroupScore(Group);
+    if (GroupScore < CurrentScore)
+      continue;
+    if (GroupScore == CurrentScore &&
+        Reg.getGroupPinnedScore(Group) <= CurrentPinnedScore)
+      continue;
+
+    // We want to favor registers which would benefit from being re-assigned to
+    // the single MSB group in which they have pinned neighbors (if there is
+    // one), as this is likely to resolve conflicts in the future without having
+    // to place MODE-setting instructions.
+    PinState PS;
+    if (PinGroups.none()) {
+      PS = PinState::NoPin;
+    } else {
+      const MSBGroup SinglePin = PinGroups.find_first();
+      PS = SinglePin == Group ? PinState::TargetIsPin : PinState::PinInBadGroup;
+    }
+
+    int Benefit = 2 * GroupScore - TotalScore;
+    Targets.push_back({Group, Benefit, PS});
   }
-  assert(!Targets.test(Reg.getMSB()) && "current group cannot be target");
-  if (Targets.none())
+  if (Targets.empty())
     return;
 
-  // We want to favor registers which would benefit from being re-assigned to
-  // the single MSB group in which they have pinned neighbors (if there is
-  // one), as this is likely to resolve conflicts in the future without having
-  // to place MODE-setting instructions.
-  if (PinGroups.none()) {
-    NeighboringPins = PinState::NoPin;
-  } else {
-    const MSBGroup SinglePin = PinGroups.find_first();
-    NeighboringPins = (SinglePin == Reg.getMSB() || !Targets.test(SinglePin))
-                          ? PinState::PinInBadGroup
-                          : PinState::TargetIsPin;
-  }
+  sort(Targets, [](const Target &LHS, const Target &RHS) {
+    if (LHS.PS != RHS.PS)
+      return LHS.PS < RHS.PS;
+    if (LHS.Benefit != RHS.Benefit)
+      return LHS.Benefit < RHS.Benefit;
+    /// FIXME: favors high MSB groups for everyone, might want to bias this
+    return LHS.Group < RHS.Group;
+  });
 }
 
 MaxHeap::MaxHeap(OptimizableRegs &OptRegs) {
@@ -1391,12 +1412,13 @@ MaxHeap::MaxHeap(OptimizableRegs &OptRegs) {
   }
 }
 
-void MaxHeap::reorderIfExists(const OptReg &Reg) {
+void MaxHeap::reorderIfExists(const OptReg &Reg, bool RecomputeTargets) {
   auto Cand = OptRegToSlotIdx.find(&Reg);
   if (Cand == OptRegToSlotIdx.end())
     return;
   Slot &S = Slots[Cand->second];
-  S.Cand.recomputeTargets();
+  if (RecomputeTargets)
+    S.Cand.recomputeTargets();
 
   // Re-order the tree around the updated slot.
   if (!siftUp(S.HeapIdx))
@@ -1469,9 +1491,8 @@ void VirtRegReMap::getAntiHintRegUnits(Register VirtReg,
   }
 }
 
-bool VirtRegReMap::tryReAssign(OptReg &Reg,
-                               const SmallBitVector &TargetGroups) {
-  assert(!TargetGroups.test(Reg.getMSB()) && "target is current MSB group");
+bool VirtRegReMap::tryReAssign(OptReg &Reg, MSBGroup Group) {
+  assert(Group != Reg.getMSB() && "target is current MSB group");
 
   Register VirtReg = Reg.getVirt();
   const LiveInterval &LI = LIS.getInterval(VirtReg);
@@ -1485,8 +1506,8 @@ bool VirtRegReMap::tryReAssign(OptReg &Reg,
   // registers at the beginning of the next group. This avoids
   // unassigning/re-assigning the same physical register in most failed
   // re-assignments.
-  const bool UnassignOriginalReg = regCrossesGroupBoundary(OriginalPhys, *RC) &&
-                                   TargetGroups.test(Reg.getMSB() + 1);
+  const bool UnassignOriginalReg =
+      regCrossesGroupBoundary(OriginalPhys, *RC) && Group == Reg.getMSB() + 1;
   if (UnassignOriginalReg)
     LRM.unassign(LI);
 
@@ -1497,8 +1518,7 @@ bool VirtRegReMap::tryReAssign(OptReg &Reg,
 
   for (MCPhysReg CandPhysReg : RCI.getOrder(RC)) {
     MSBGroup CandGroup = getVGPRGroup(CandPhysReg, VRM);
-    if (!TargetGroups.test(CandGroup) ||
-        isAntiHinted(CandPhysReg, AntiHintUnits) ||
+    if (CandGroup != Group || isAntiHinted(CandPhysReg, AntiHintUnits) ||
         LRM.checkInterference(LI, CandPhysReg) != LiveRegMatrix::IK_Free)
       continue;
 
@@ -1542,29 +1562,21 @@ bool AMDGPUOptimizeVGPREncoding::run(MachineFunction &MF) {
   ModeUsage.reserve(MF.getNumBlockIDs());
   for (const MachineBasicBlock &MBB : MF)
     ModeUsage.emplace_back(MBB, OptVirtRegs, Pinned);
-
-  // Initialize all optimizable registers.
-  OptimizableRegs OptRegs(OptVirtRegs, Pinned, ModeUsage, VRM);
-
   LLVM_DEBUG({
     dbgs() << "* Per-block MODE-usage:\n";
     for (const MBBModeUsage &MBB : ModeUsage) {
       dbgs() << "  MBB #" << MBB.MBB.getNumber() << ":\n" << MBB.print(VRM);
     }
-    dbgs() << "* Neighborhoods:\n";
-    for (const OptReg &Reg : OptRegs) {
-      dbgs() << "  " << Reg.print(VRM) << '\n';
-      for (const auto &[NeighborReg, NumOcc] : Reg.getNeighbors()) {
-        dbgs() << "    [" << NumOcc << "] " << NeighborReg->print(VRM) << '\n';
-      }
-    }
   });
 
+  OptimizableRegs OptRegs(OptVirtRegs, Pinned, ModeUsage, VRM);
   ModeSetOptimizer Optimizer(OptRegs, ModeUsage, VRM);
   VirtRegReMap VRRM(LRM, LIS, MF, VRM);
 
   bool Changed = false;
   do {
+    LLVM_DEBUG(dbgs() << Optimizer.print(VRM));
+
     // Constructs a max-heap with all remaining unpinned registers that are
     // candidates for re-assignment.
     //
@@ -1587,10 +1599,11 @@ bool AMDGPUOptimizeVGPREncoding::run(MachineFunction &MF) {
     // is upper-bounded by the number of neighboring relationships between all
     // registers (itself only decreasing after initialization).
     while (OptRegCandidate *Candidate = AllCandidates.getMostProfitable()) {
+      OptReg &Reg = Candidate->Reg;
       LLVM_DEBUG({
-        dbgs() << "| Attempting re-assignment of " << Candidate->print(VRM)
+        dbgs() << "  Attempting re-assignment of " << Candidate->print(VRM)
                << '\n';
-        for (const auto &[NeighborReg, _] : Candidate->Reg.getNeighbors())
+        for (const auto &[NeighborReg, _] : Reg.getNeighbors())
           dbgs() << "    " << NeighborReg->print(VRM) << '\n';
       });
 
@@ -1602,27 +1615,44 @@ bool AMDGPUOptimizeVGPREncoding::run(MachineFunction &MF) {
       }
       ScoreChanged.reset();
 
-      // The candidate's epoch changed.
-      ScoreChanged.set(Candidate->Reg.getVirtIndex());
+      /// FIXME: The problem at hand here is as follows. On a re-assignment
+      /// failure, the top target should be eliminated and the next one
+      /// evaluated on its own merit (pin-state, benefit). This should trigger a
+      /// re-order of the register, but not of its neighbors. Its targets should
+      /// *NOT* be re-computed as this would reset the target we just failed to
+      /// achieve. When a neighbor of a register that already failed at least
+      /// one of its current re-assignments is successfully re-assigned, we
+      /// *MUST* recompute all the latter's targets because its group scores
+      /// have changed.
 
       // Attempts re-assignment to a better MSB group.
-      if (VRRM.tryReAssign(Candidate->Reg, Candidate->Targets)) {
+      if (VRRM.tryReAssign(Reg, Candidate->getTopTarget())) {
         LLVM_DEBUG(dbgs() << "  | SUCCESS: Assigned to free physical register "
-                          << printReg(VRM.getPhys(Candidate->Reg.getVirt()),
+                          << printReg(VRM.getPhys(Reg.getVirt()),
                                       ST.getRegisterInfo(), 0, &MF.getRegInfo())
                           << '\n');
         ++Epoch;
-        Optimizer.regChangedGroup(Candidate->Reg, ScoreChanged);
+        Optimizer.regChangedGroup(Reg, ScoreChanged);
       }
 
       // Optimizable registers whose score changed need to be re-ordered within
       // the max-heap.
-      for (unsigned VirtRegIdx : ScoreChanged.set_bits())
-        AllCandidates.reorderIfExists(OptRegs[VirtRegIdx]);
+      for (unsigned VirtRegIdx : ScoreChanged.set_bits()) {
+        AllCandidates.reorderIfExists(OptRegs[VirtRegIdx],
+                                      /*RecomputeTargets=*/true);
+      }
+      if (ScoreChanged.test(Reg.getVirtIndex()))
+        continue;
+
+      // The candidate's epoch changed and its top target failed. This requires
+      // a re-order but no target re-computation.
+      Candidate->failedTopTarget();
+      AllCandidates.reorderIfExists(Reg, /*RecomputeTargets=*/false);
     }
     Changed |= (Epoch != OptRegCandidate::StartEpoch + 1);
   } while (Optimizer.resolveConflictsAndPinRegs());
 
+  LLVM_DEBUG(dbgs() << Optimizer.print(VRM));
   return Changed;
 }
 
@@ -1691,69 +1721,98 @@ Printable OptReg::print(const VirtRegMap &VRM) const {
   });
 }
 
+Printable ModeSetOptimizer::print(const VirtRegMap &VRM) const {
+  return Printable([&](raw_ostream &OS) {
+    OS << "* Optimization status:\n  Optimizable registers:\n";
+    for (const OptReg &Reg : OptRegs) {
+      OS << "  " << Reg.print(VRM) << '\n';
+      for (const auto &[NeighborReg, NumOcc] : Reg.getNeighbors())
+        OS << "    [" << NumOcc << "] " << NeighborReg->print(VRM) << '\n';
+    }
+
+    OS << "  MODE-set placement:\n";
+    unsigned NumModeSetPlaced = 0;
+    for (const auto &[MBBIdx, MBB] : enumerate(ModeUsage)) {
+      unsigned NumModeSetInBlock = ModeSetPlacement[MBBIdx].count();
+      if (NumModeSetInBlock == 0)
+        continue;
+      OS << "    MBB #" << MBB.MBB.getNumber() << " has " << NumModeSetInBlock
+         << " simulated MODE-sets\n";
+      NumModeSetPlaced += NumModeSetInBlock;
+    }
+    OS << "  " << NumModeSetPlaced
+       << " simulated MODE-sets were placed in total\n";
+  });
+}
+
 Printable OptRegCandidate::print(const VirtRegMap &VRM) const {
   return Printable([&](raw_ostream &OS) {
     OS << Reg.print(VRM);
-    if (Targets.none()) {
+    if (Targets.empty()) {
       OS << " has no targets";
       return;
     }
 
-    auto PrintMoveScore = [&](MSBGroup MSB) {
-      OS << printGroup(MSB) << "(+"
-         << Reg.getGroupScore(MSB) - Reg.getCurrentGroupScore() << ')';
-    };
-
     OS << " move to ";
-    for (MSBGroup Dst : drop_end(Targets.set_bits())) {
-      PrintMoveScore(Dst);
-      OS << " / ";
-    }
-    PrintMoveScore(Targets.find_last());
-    OS << " with benefit " << Benefit;
+    for (const Target &Tgt : reverse(Targets))
+      OS << printTarget(Tgt) << " / ";
+    OS << " @ " << "epoch " << Epoch;
+  });
+}
 
-    OS << " (";
-    switch (NeighboringPins) {
+Printable OptRegCandidate::printTarget(const Target &Tgt) const {
+  return Printable([&](raw_ostream &OS) {
+    OS << printGroup(Tgt.Group) << "(+"
+       << Reg.getGroupScore(Tgt.Group) - Reg.getCurrentGroupScore();
+    switch (Tgt.PS) {
     case PinState::PinInBadGroup:
-      OS << "bad pin";
+      OS << ", bad pin)";
       break;
     case PinState::NoPin:
-      OS << "no pin";
+      OS << ", no pin)";
       break;
     case PinState::TargetIsPin:
-      OS << "move to pin";
+      OS << ", move to pin)";
       break;
     }
-    OS << ") @ " << "epoch " << Epoch;
   });
 }
 
 Printable MaxHeap::print(const VirtRegMap &VRM,
                          const LiveIntervals &LIS) const {
   return Printable([&](raw_ostream &OS) {
-    auto PrintRegsList = [&](ArrayRef<const OptRegCandidate *> Cands,
+    using CandidateAndTarget =
+        std::pair<const OptRegCandidate *, const OptRegCandidate::Target *>;
+
+    auto PrintRegsList = [&](ArrayRef<CandidateAndTarget> Cands,
                              StringRef Name) {
-      OS << "      " << Name << " (" << Cands.size() << " registers):\n";
-      for (const OptRegCandidate *Cand : Cands)
-        OS << "        " << Cand->print(VRM) << '\n';
+      OS << "    " << Name << " (" << Cands.size() << " registers):\n";
+      for (const auto &[Cand, Tgt] : Cands)
+        OS << "      " << Cand->Reg.print(VRM) << " move to "
+           << Cand->printTarget(*Tgt) << '\n';
     };
 
     auto PrintRegs = [&](ArrayRef<const OptRegCandidate *> Cands) -> void {
       using PinState = OptRegCandidate::PinState;
       // Group candidates per pin state.
-      SmallDenseMap<PinState, SmallVector<const OptRegCandidate *>, 4>
+      SmallDenseMap<PinState, SmallVector<CandidateAndTarget>, 4>
           CandsPerPinState;
       SmallVector<const OptRegCandidate *> NoTargets;
       for (const OptRegCandidate *Cand : Cands) {
-        if (Cand->Targets.any())
-          CandsPerPinState[Cand->NeighboringPins].push_back(Cand);
-        else
+        if (!Cand->Targets.empty()) {
+          for (const OptRegCandidate::Target &Tgt : Cand->Targets)
+            CandsPerPinState[Tgt.PS].push_back({Cand, &Tgt});
+        } else {
           NoTargets.push_back(Cand);
+        }
       }
       PrintRegsList(CandsPerPinState[PinState::TargetIsPin], "Good pin");
       PrintRegsList(CandsPerPinState[PinState::NoPin], "No pin");
       PrintRegsList(CandsPerPinState[PinState::PinInBadGroup], "Bad pin");
-      PrintRegsList(NoTargets, "No target");
+
+      OS << "    No target (" << NoTargets.size() << " registers):\n";
+      for (const OptRegCandidate *Cand : NoTargets)
+        OS << "      " << Cand->Reg.print(VRM) << '\n';
     };
 
     // Group candidates per MBB for displaying.
@@ -1766,13 +1825,13 @@ Printable MaxHeap::print(const VirtRegMap &VRM,
       CandsPerMBB[MBB].push_back(&Cand);
     }
 
-    OS << "* Starting re-assignment phase with registers:\n| Candidates are:\n";
-    OS << "    Global (" << CandsPerMBB[nullptr].size() << " registers):\n";
+    OS << "* Starting re-assignment phase with registers:\n";
+    OS << "  | Global (" << CandsPerMBB[nullptr].size() << " registers):\n";
     PrintRegs(CandsPerMBB[nullptr]);
     for (const auto &[MBB, Cands] : CandsPerMBB) {
       if (!MBB)
         continue;
-      OS << "    MBB #" << MBB->getNumber() << " (" << Cands.size()
+      OS << "  | MBB #" << MBB->getNumber() << " (" << Cands.size()
          << " registers)\n";
       PrintRegs(Cands);
     }
