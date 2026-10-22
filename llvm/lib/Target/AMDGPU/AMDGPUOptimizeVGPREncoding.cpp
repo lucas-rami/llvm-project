@@ -29,6 +29,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/CodeGen/LiveDebugVariables.h"
 #include "llvm/CodeGen/LiveIntervals.h"
@@ -67,6 +68,8 @@ static constexpr unsigned GroupSize = 1 << GroupSizeLog2;
 /// in [0, NumOprdTypes).
 using OprdType = unsigned;
 static constexpr unsigned NumOprdTypes = 4;
+
+static constexpr unsigned StartingEpoch = 0;
 
 /// An instruction that has at least one VGPR operand whose MSBs are provided by
 /// MODE. Instructions are part of a list and refer to other "neighbor"
@@ -185,7 +188,7 @@ public:
   /// Abstract coordinates for an occurrence of this register.
   struct Coordinates {
     /// The index of the MBB.
-    unsigned MBBIndex;
+    unsigned MBBIdx;
     /// The index of the MODE-using instruction.
     unsigned InstrIdx;
     /// The operand type.
@@ -223,6 +226,16 @@ public:
   /// Returns the list of coordinates corresponding to this register's
   /// occurrences.
   ArrayRef<Coordinates> getOccurrences() const { return Occurrences; }
+
+  std::optional<unsigned> getMBBIdx() const {
+    std::optional<unsigned> MBBIdx;
+    for (const Coordinates &Pos : Occurrences) {
+      if (MBBIdx && *MBBIdx != Pos.MBBIdx)
+        return std::nullopt;
+      MBBIdx = Pos.MBBIdx;
+    }
+    return MBBIdx;
+  }
 
   /// Returns the underlying virtual register.
   Register getVirt() const { return VirtReg; }
@@ -519,9 +532,6 @@ private:
 /// MSB groups.
 class OptRegCandidate {
 public:
-  /// Starting epoch when a candidate is created.
-  static constexpr unsigned StartEpoch = 0;
-
   enum class PinState {
     /// Single pin in non-target group.
     PinInBadGroup = 0,
@@ -533,6 +543,8 @@ public:
 
   /// The optimizable register.
   OptReg &Reg;
+
+  unsigned CandIdx;
 
   /// Set bits indicate MSB groups with the highest score and more desirable
   /// than the current one the register is in i.e., target groups. No targets
@@ -548,30 +560,25 @@ public:
   /// Only relevant when the candidate has at least one target.
   int Benefit;
 
+  bool FailedReassign;
+
   /// Creates the candidate for \p Reg.
-  OptRegCandidate(OptReg &Reg) : Reg(Reg), Targets(NumMSBGroups) {
+  OptRegCandidate(OptReg &Reg, unsigned CandIdx)
+      : Reg(Reg), CandIdx(CandIdx), Targets(NumMSBGroups) {
     assert(!Reg.isPinned() && "register cannot be pinned initially");
+    LastTryEpochs.fill(StartingEpoch);
     recomputeTargets();
   }
 
   /// Re-computes the candidate's target groups and potential benefit.
   void recomputeTargets();
 
-  /// Whether the candidate has a profitable re-assignment to any MSB group
-  /// i.e., a re-assigment that will strictly increase the combined score of all
-  /// optimizable registers.
-  bool isProfitable() const { return Targets.any(); }
+  /// Whether the candidate has a possible profitable re-assignment to any MSB
+  /// group i.e., a re-assigment that will strictly increase the combined score
+  /// of all optimizable registers.
+  bool isProfitable() const { return !FailedReassign && Targets.any(); }
 
-  /// Returns the current epoch.
-  unsigned getEpoch() const { return Epoch; }
-
-  /// Sets the epoch to \p NewEpoch, returning whether the epoch changed.
-  bool setEpoch(unsigned NewEpoch) {
-    assert(Epoch <= NewEpoch && "epoch must not decrease");
-    const bool SameEpoch = Epoch == NewEpoch;
-    Epoch = NewEpoch;
-    return SameEpoch;
-  }
+  unsigned &getGroupEpoch(MSBGroup Group) { return LastTryEpochs[Group]; }
 
   bool operator<(const OptRegCandidate &Other) const;
 
@@ -582,7 +589,7 @@ public:
 private:
   /// Last epoch at which a re-assignment took place and during which the
   /// candidate was evaluated.
-  unsigned Epoch = StartEpoch;
+  std::array<unsigned, NumMSBGroups> LastTryEpochs;
 };
 
 /// A minimal binary max-heap for \ref OptRegCandidate. All tree elements are
@@ -601,6 +608,21 @@ public:
     return TopCand.isProfitable() ? &TopCand : nullptr;
   }
 
+  OptRegCandidate *getCandidate(const OptReg &Reg) {
+    auto Cand = OptRegToSlotIdx.find(&Reg);
+    if (Cand == OptRegToSlotIdx.end())
+      return nullptr;
+    return &Slots[Cand->second].Cand;
+  }
+
+  /// If \p Reg is a candidate, update its score and re-sort the heap.
+  void reorder(const OptRegCandidate &Cand) {
+    const unsigned HeapIdx = Slots[Cand.CandIdx].HeapIdx;
+    // Re-order the tree around the updated slot.
+    if (!siftUp(HeapIdx))
+      siftDown(HeapIdx);
+  }
+
   /// If \p Reg is a candidate, update its score and re-sort the heap.
   void reorderIfExists(const OptReg &Reg);
 
@@ -616,7 +638,8 @@ private:
   struct Slot {
     OptRegCandidate Cand;
     unsigned HeapIdx;
-    Slot(OptReg &Reg, unsigned HeapIdx) : Cand(Reg), HeapIdx(HeapIdx) {}
+    Slot(OptReg &Reg, unsigned CandIdx, unsigned HeapIdx)
+        : Cand(Reg, CandIdx), HeapIdx(HeapIdx) {}
   };
 
   /// Storage for register candidates under consideration.
@@ -647,7 +670,7 @@ private:
 /// Handles re-assignment of virtual registers to physical registers.
 class VirtRegReMap {
 public:
-  VirtRegReMap(LiveRegMatrix &LRM, LiveIntervals &LIS,
+  VirtRegReMap(LiveRegMatrix &LRM, LiveIntervals &LIS, unsigned NumBlocks,
                const MachineFunction &MF, const VirtRegMap &VRM);
 
   /// Set bits in \p AntiHintUnits corresponding to register units for which \p
@@ -664,9 +687,9 @@ public:
   }
 
   /// Attempts to re-assign virtual register \p Reg to an available physical
-  /// register in any of the MSB groups indicated by set bits in \p
-  /// TargetGroups. Returns whether any re-assignment took place.
-  bool tryReAssign(OptReg &Reg, const SmallBitVector &TargetGroups);
+  /// register in MSB group \p Group. Returns whether any re-assignment took
+  /// place.
+  bool tryReAssign(OptReg &Reg, MSBGroup TargetGroup, unsigned &Epoch);
 
   /// Determines whether register \p PhysReg in class \p RC crosses an MSB group
   /// boundary.
@@ -674,11 +697,24 @@ public:
                                const TargetRegisterClass &RC) const;
 
 private:
+  using PerGroupChanges = std::array<SmallVector<MCRegister, 4>, NumMSBGroups>;
+  SmallVector<PerGroupChanges, 0> PerBlockChanges;
+
   LiveRegMatrix &LRM;
   LiveIntervals &LIS;
   RegisterClassInfo RCI;
   const VirtRegMap &VRM;
   const SIRegisterInfo &TRI;
+
+  bool tryReAssign(OptReg &Reg, MSBGroup TargetGroup,
+                   ArrayRef<MCPhysReg> TryRegs, unsigned &Epoch);
+
+  void reassign(OptReg &Reg, MCRegister CurrentPhysReg, MCRegister NewPhysReg);
+
+  void collectFreedPhysRegs(const OptReg &Reg, unsigned FromEpoch,
+                            SmallDenseSet<MCRegister, 4> &FreedRegs) const;
+
+  unsigned getCurrentEpoch(const OptReg &Reg) const;
 };
 
 class AMDGPUOptimizeVGPREncoding {
@@ -1314,14 +1350,10 @@ bool ModeSetOptimizer::resolveConflictsAndPinRegs() {
 bool OptRegCandidate::operator<(const OptRegCandidate &Other) const {
   // Registers without targets are not useful candidates. Pinned registers have
   // no targets by construction so they get caught here as well.
-  if (Other.Targets.none())
-    return Targets.none();
-  if (Targets.none())
+  if (!Other.isProfitable())
+    return !isProfitable();
+  if (!isProfitable())
     return true;
-
-  // Earlier/Smaller epoch wins.
-  if (Epoch != Other.Epoch)
-    return Other.Epoch < Epoch;
 
   // Bigger pin-state wins. This generally favors MSB group changes toward
   // groups with bigger number of pinned neighbors in.
@@ -1337,6 +1369,7 @@ bool OptRegCandidate::operator<(const OptRegCandidate &Other) const {
 }
 
 void OptRegCandidate::recomputeTargets() {
+  FailedReassign = false;
   Targets.reset();
   if (Reg.isPinned())
     return;
@@ -1407,7 +1440,7 @@ MaxHeap::MaxHeap(OptimizableRegs &OptRegs) {
 
     const unsigned SlotIdx = Slots.size();
     const unsigned HeapIdx = HeapToSlot.size();
-    Slots.emplace_back(Reg, HeapIdx);
+    Slots.emplace_back(Reg, SlotIdx, HeapIdx);
     HeapToSlot.push_back(SlotIdx);
     OptRegToSlotIdx.insert({&Reg, SlotIdx});
     siftUp(HeapIdx);
@@ -1473,8 +1506,9 @@ bool MaxHeap::siftDown(unsigned HeapIdx) {
 }
 
 VirtRegReMap::VirtRegReMap(LiveRegMatrix &LRM, LiveIntervals &LIS,
-                           const MachineFunction &MF, const VirtRegMap &VRM)
-    : LRM(LRM), LIS(LIS), VRM(VRM),
+                           unsigned NumBlocks, const MachineFunction &MF,
+                           const VirtRegMap &VRM)
+    : PerBlockChanges(NumBlocks, {}), LRM(LRM), LIS(LIS), VRM(VRM),
       TRI(*static_cast<const SIRegisterInfo *>(&VRM.getTargetRegInfo())) {
   RCI.runOnMachineFunction(MF);
 }
@@ -1492,13 +1526,56 @@ void VirtRegReMap::getAntiHintRegUnits(Register VirtReg,
   }
 }
 
-bool VirtRegReMap::tryReAssign(OptReg &Reg,
-                               const SmallBitVector &TargetGroups) {
-  assert(!TargetGroups.test(Reg.getMSB()) && "target is current MSB group");
+bool VirtRegReMap::tryReAssign(OptReg &Reg, MSBGroup TargetGroup,
+                               unsigned &Epoch) {
+  const unsigned OriginalGroup = Reg.getMSB();
+  assert(TargetGroup != OriginalGroup && "target group is current MSB group");
+  Register VirtReg = Reg.getVirt();
 
+  const MachineRegisterInfo &MRI = VRM.getRegInfo();
+  const TargetRegisterClass *RegRC = MRI.getRegClass(VirtReg);
+
+  // First re-assignment attempt, try all physcial registers in the target
+  // group.
+  if (Epoch == 0)
+    return tryReAssign(Reg, TargetGroup, RCI.getOrder(RegRC), Epoch);
+
+  // Collect physical registers that were freed since the last time the
+  // re-assignment failed.
+  SmallDenseSet<MCRegister, 4> FreedRegs;
+  collectFreedPhysRegs(Reg, Epoch, FreedRegs);
+
+  // Determine the set of registers from the class we want to re-assign to that
+  // may now be available.
+  SmallSetVector<MCPhysReg, 4> TryRegs;
+  const unsigned RegRCSize = RegRC->getSizeInBits();
+  for (MCRegister CandPhysReg : FreedRegs) {
+    const TargetRegisterClass *CandRC = TRI.getMinimalPhysRegClass(CandPhysReg);
+    assert(CandRC && "expected register class to be defined");
+    const unsigned CandRCSize = CandRC->getSizeInBits();
+    if (CandRCSize == RegRCSize) {
+      if (RegRC->contains(CandPhysReg))
+        TryRegs.insert(CandPhysReg);
+    } else if (CandRCSize < RegRCSize) {
+      for (MCRegister SuperPhysReg : TRI.superregs(CandPhysReg)) {
+        if (RegRC->contains(SuperPhysReg))
+          TryRegs.insert(SuperPhysReg);
+      }
+    } else { // CandRCSize > RegRCSize
+      for (MCRegister SubPhysReg : TRI.subregs(CandPhysReg)) {
+        if (RegRC->contains(SubPhysReg))
+          TryRegs.insert(SubPhysReg);
+      }
+    }
+  }
+
+  return tryReAssign(Reg, TargetGroup, TryRegs.getArrayRef(), Epoch);
+}
+
+bool VirtRegReMap::tryReAssign(OptReg &Reg, MSBGroup TargetGroup,
+                               ArrayRef<MCPhysReg> TryRegs, unsigned &Epoch) {
   Register VirtReg = Reg.getVirt();
   const LiveInterval &LI = LIS.getInterval(VirtReg);
-  MCRegister OriginalPhys = VRM.getPhys(VirtReg);
   const MachineRegisterInfo &MRI = VRM.getRegInfo();
   const TargetRegisterClass *RC = MRI.getRegClass(VirtReg);
 
@@ -1508,8 +1585,10 @@ bool VirtRegReMap::tryReAssign(OptReg &Reg,
   // registers at the beginning of the next group. This avoids
   // unassigning/re-assigning the same physical register in most failed
   // re-assignments.
-  const bool UnassignOriginalReg = regCrossesGroupBoundary(OriginalPhys, *RC) &&
-                                   TargetGroups.test(Reg.getMSB() + 1);
+  MCRegister CurrentPhysReg = VRM.getPhys(VirtReg);
+  const bool UnassignOriginalReg =
+      regCrossesGroupBoundary(CurrentPhysReg, *RC) &&
+      TargetGroup == Reg.getMSB();
   if (UnassignOriginalReg)
     LRM.unassign(LI);
 
@@ -1518,24 +1597,83 @@ bool VirtRegReMap::tryReAssign(OptReg &Reg,
   BitVector AntiHintUnits;
   getAntiHintRegUnits(VirtReg, AntiHintUnits);
 
-  for (MCPhysReg CandPhysReg : RCI.getOrder(RC)) {
+  for (MCPhysReg CandPhysReg : TryRegs) {
     MSBGroup CandGroup = getVGPRGroup(CandPhysReg, VRM);
-    if (!TargetGroups.test(CandGroup) ||
-        isAntiHinted(CandPhysReg, AntiHintUnits) ||
+    if (CandGroup != TargetGroup || isAntiHinted(CandPhysReg, AntiHintUnits) ||
         LRM.checkInterference(LI, CandPhysReg) != LiveRegMatrix::IK_Free)
       continue;
 
-    if (!UnassignOriginalReg)
-      LRM.unassign(LI);
-    LRM.assign(LI, CandPhysReg);
-    Reg.notifyPhysAssignmentChanged(getVGPRGroup(CandPhysReg, VRM));
+    reassign(Reg, CurrentPhysReg, CandPhysReg);
     return true;
   }
 
   // We failed to find a register.
   if (UnassignOriginalReg)
-    LRM.assign(LI, OriginalPhys);
+    LRM.assign(LI, CurrentPhysReg);
+
+  // Failed re-assignment. Remember at which epoch this failed.
+  Epoch = getCurrentEpoch(Reg) + 1;
   return false;
+}
+
+void VirtRegReMap::reassign(OptReg &Reg, MCRegister CurrentPhysReg,
+                            MCRegister NewPhysReg) {
+  const MSBGroup CurrentGroup = Reg.getMSB(),
+                 NewGroup = getVGPRGroup(NewPhysReg, VRM);
+  const LiveInterval &LI = LIS.getInterval(Reg.getVirt());
+
+  if (VRM.hasPhys(Reg.getVirt()))
+    LRM.unassign(LI);
+  LRM.assign(LI, NewPhysReg);
+  Reg.notifyPhysAssignmentChanged(NewGroup);
+
+  // LastTryEpoch isn't modified: we may not have tried all registers in the
+  // group so further attempts to re-assign to it should again try all
+  // registers.
+  std::optional<unsigned> MBBIdx = Reg.getMBBIdx();
+  if (MBBIdx) {
+    PerBlockChanges[*MBBIdx][CurrentGroup].push_back(CurrentPhysReg);
+    return;
+  }
+  // The virtual register is not local to a block. Convervatively increase
+  // the epoch of all blocks for its MSB group.
+  for (PerGroupChanges &BlockChanges : PerBlockChanges)
+    BlockChanges[CurrentGroup].push_back(CurrentPhysReg);
+}
+
+void VirtRegReMap::collectFreedPhysRegs(
+    const OptReg &Reg, unsigned FromEpoch,
+    SmallDenseSet<MCRegister, 4> &FreedRegs) const {
+  assert(FromEpoch > 0 && "does not work with epoch 0");
+
+  std::optional<unsigned> MBBIdx = Reg.getMBBIdx();
+  if (MBBIdx) {
+    ArrayRef<MCRegister> PhysRegs = PerBlockChanges[*MBBIdx][Reg.getMSB()];
+    if (FromEpoch <= PhysRegs.size())
+      FreedRegs.insert_range(PhysRegs.drop_front(FromEpoch - 1));
+    return;
+  }
+
+  for (const PerGroupChanges &BlockChanges : PerBlockChanges) {
+    ArrayRef<MCRegister> PhysRegs = BlockChanges[Reg.getMSB()];
+    if (FromEpoch <= PhysRegs.size())
+      FreedRegs.insert_range(PhysRegs.drop_front(FromEpoch - 1));
+  }
+  return;
+}
+
+unsigned VirtRegReMap::getCurrentEpoch(const OptReg &Reg) const {
+  std::optional<unsigned> MBBIdx = Reg.getMBBIdx();
+  if (MBBIdx)
+    return PerBlockChanges[*MBBIdx][Reg.getMSB()].size();
+
+  /// TODO: Explain the rationale for the minimum, find a proper max startval.
+  unsigned MinEpoch = 1000000;
+  for (const PerGroupChanges &BlockChanges : PerBlockChanges) {
+    MinEpoch = std::min(
+        MinEpoch, static_cast<unsigned>(BlockChanges[Reg.getMSB()].size()));
+  }
+  return MinEpoch;
 }
 
 bool VirtRegReMap::regCrossesGroupBoundary(
@@ -1574,7 +1712,7 @@ bool AMDGPUOptimizeVGPREncoding::run(MachineFunction &MF) {
 
   OptimizableRegs OptRegs(OptVirtRegs, Pinned, ModeUsage, VRM);
   ModeSetOptimizer Optimizer(OptRegs, ModeUsage, VRM);
-  VirtRegReMap VRRM(LRM, LIS, MF, VRM);
+  VirtRegReMap VRRM(LRM, LIS, ModeUsage.size(), MF, VRM);
 
   bool Changed = false;
   do {
@@ -1586,23 +1724,23 @@ bool AMDGPUOptimizeVGPREncoding::run(MachineFunction &MF) {
     // FIXME: There is no need to re-construct the heap every time, we can just
     // let pinned registers fall to the bottom of it since they have no target
     // MSB group by construction.
-    MaxHeap AllCandidates(OptRegs);
-    LLVM_DEBUG(dbgs() << AllCandidates.print(VRM, LIS));
-
-    // Incremented at each successful register re-assignment, which may unblock
-    // previously failed attempts at re-assigning.
-    unsigned Epoch = OptRegCandidate::StartEpoch + 1;
+    MaxHeap CandidateHeap(OptRegs);
+    LLVM_DEBUG(dbgs() << CandidateHeap.print(VRM, LIS));
 
     // Keeps track of which optimizable virtual registers have their score
-    // changed by re-assignments.
-    BitVector ScoreChanged(OptRegs.getNumVirtRegs());
+    // changed by re-assignments, and which previously failed re-assignment to
+    // their current target groups.
+    BitVector ScoreChanged(OptRegs.getNumVirtRegs()),
+        FailedReassignment(OptRegs.getNumVirtRegs()),
+        Reassigned(OptRegs.getNumVirtRegs());
 
     // Only accepting profitable candidates guarantees forward progress
     // because re-assigning to target groups increases the combined score, which
     // is upper-bounded by the number of neighboring relationships between all
     // registers (itself only decreasing after initialization).
-    while (OptRegCandidate *Candidate = AllCandidates.getMostProfitable()) {
+    while (OptRegCandidate *Candidate = CandidateHeap.getMostProfitable()) {
       OptReg &Reg = Candidate->Reg;
+      const MSBGroup RegGroup = Reg.getMSB();
       LLVM_DEBUG({
         dbgs() << "  Attempting re-assignment of " << Candidate->print(VRM)
                << '\n';
@@ -1610,33 +1748,70 @@ bool AMDGPUOptimizeVGPREncoding::run(MachineFunction &MF) {
           dbgs() << "    " << NeighborReg->print(VRM) << '\n';
       });
 
-      // This catches a second evaluation of the same candidate under the same
-      // exact conditions, which would fail again.
-      if (Candidate->setEpoch(Epoch)) {
-        LLVM_DEBUG(dbgs() << "  | No more useful candidates!\n");
-        break;
-      }
+      // Attempts re-assignment to a target MSB group.
       ScoreChanged.reset();
-
-      // The candidate's epoch changed.
-      ScoreChanged.set(Candidate->Reg.getVirtIndex());
-
-      // Attempts re-assignment to a better MSB group.
-      if (VRRM.tryReAssign(Reg, Candidate->Targets)) {
-        LLVM_DEBUG(dbgs() << "  | SUCCESS: Assigned to free physical register "
-                          << printReg(VRM.getPhys(Reg.getVirt()),
-                                      ST.getRegisterInfo(), 0, &MF.getRegInfo())
-                          << '\n');
-        ++Epoch;
-        Optimizer.regChangedGroup(Reg, ScoreChanged);
+      for (MSBGroup TargetGroup : Candidate->Targets.set_bits()) {
+        unsigned &Epoch = Candidate->getGroupEpoch(TargetGroup);
+        if (VRRM.tryReAssign(Reg, TargetGroup, Epoch)) {
+          LLVM_DEBUG(dbgs()
+                     << "  | SUCCESS: Assigned to free physical register "
+                     << printReg(VRM.getPhys(Reg.getVirt()),
+                                 ST.getRegisterInfo(), 0, &MF.getRegInfo())
+                     << '\n');
+          Optimizer.regChangedGroup(Reg, ScoreChanged);
+          break;
+        }
       }
 
-      // Optimizable registers whose score changed need to be re-ordered within
-      // the max-heap.
-      for (unsigned VirtRegIdx : ScoreChanged.set_bits())
-        AllCandidates.reorderIfExists(OptRegs[VirtRegIdx]);
+      if (ScoreChanged.any()) {
+        Changed = true;
+
+        // Optimizable registers whose score changed need to be re-ordered
+        // within the heap.
+        for (unsigned VirtRegIdx : ScoreChanged.set_bits())
+          CandidateHeap.reorderIfExists(OptRegs[VirtRegIdx]);
+
+        // Candidates which have had their score changed don't need to be
+        // tracked as failed re-assignments, they will naturally come back in
+        // the heap.
+        FailedReassignment &= ScoreChanged.flip();
+
+        // Re-try previously failed assignments which may now have a chance at
+        // being successfully re-assigned after a physical register was freed
+        // over the current candidate's live interval.
+        std::optional<unsigned> CandMBBIdx = Reg.getMBBIdx();
+        Reassigned.reset();
+        for (unsigned VirtRegIdx : FailedReassignment.set_bits()) {
+          const OptReg &FailedReg = OptRegs[VirtRegIdx];
+          std::optional<unsigned> FailedMBBIdx = FailedReg.getMBBIdx();
+
+          // Registers must have possibly intersecting live-range for re-trying
+          // the assignment to have any chance of succeeding.
+          if (FailedMBBIdx.has_value() && CandMBBIdx.has_value() &&
+              *FailedMBBIdx != *CandMBBIdx)
+            continue;
+
+          OptRegCandidate &FailedCandidate = *CandidateHeap.getCandidate(Reg);
+
+          // The failed candidate must be trying to change to the group in which
+          // a physical register was freed.
+          if (!FailedCandidate.Targets.test(RegGroup))
+            continue;
+
+          assert(FailedCandidate.FailedReassign && "should be true");
+          Reassigned.set(VirtRegIdx);
+          FailedCandidate.FailedReassign = false;
+          CandidateHeap.reorder(FailedCandidate);
+        }
+        FailedReassignment &= Reassigned.flip();
+
+      } else {
+        FailedReassignment.set(Reg.getVirtIndex());
+        assert(!Candidate->FailedReassign && "should be false");
+        Candidate->FailedReassign = true;
+        CandidateHeap.reorder(*Candidate);
+      }
     }
-    Changed |= (Epoch != OptRegCandidate::StartEpoch + 1);
   } while (Optimizer.resolveConflictsAndPinRegs());
 
   LLVM_DEBUG(dbgs() << Optimizer.print(VRM));
@@ -1765,7 +1940,6 @@ Printable OptRegCandidate::print(const VirtRegMap &VRM) const {
       OS << "move to pin";
       break;
     }
-    OS << ") @ " << "epoch " << Epoch;
   });
 }
 
