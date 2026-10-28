@@ -310,6 +310,8 @@ public:
   /// Rematerializer::NoReg.
   LLVM_ABI RegisterIdx getDefRegIdx(const MachineInstr &MI) const;
 
+  const LiveIntervals &getLIS() const { return LIS; }
+
   /// When rematerializating a register (called the "root" register in this
   /// context) to a given position, we must decide what to do with all its
   /// rematerializable dependencies (for unrematerializable dependencies, we
